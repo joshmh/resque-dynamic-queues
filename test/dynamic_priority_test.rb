@@ -27,4 +27,3 @@ class DynamicPriorityTest < Test::Unit::TestCase
   end
 end
 
-# test that no jobs may be added to initialized gang

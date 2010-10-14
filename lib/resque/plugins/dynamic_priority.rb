@@ -1,47 +1,58 @@
 module Resque
   module Plugins
     module DynamicPriority
-      
-      def push(queue, item, gang = nil)
-        watch_queue(queue)
-        if gang
-          redis.rpush("pqueue:#{queue},gang:#{gang}", encode(item))
-          set_gang(queue, gang)
-        else
-          redis.rpush("queue:#{queue}", encode(item))
-        end
+      def set_queue_priority(queue_group, queue, score)
+        redis.zadd("queue_group:#{queue_group}", score, queue)
       end
 
-      def set_gang(queue, gang, score = 0)
-        redis.zadd("pqueue:#{queue}", score, gang)
+      # Creates queue and gives it initial score of zero
+      # If queue exists, does nothing
+      def touch_queue_priority(queue_group, queue)
+        redis.zincrby("queue_group:#{queue_group}", 0, queue)
+      end
+
+      def queues(queue_group)
+        # No need to return all queues, since empty queues are actively removed
+        top_queues = redis.zrange("queue_group:#{queue_group}", 0, 5)        
+      end
+
+      def redis
+        Redis.redis
       end
       
-      def pop(queue)
-        item = redis.lpop("queue:#{queue}")
-
-        # If no regular queue item is found, it might be a priority queue
-        item ||= do
-          pqueue_key = "pqueue:#{queue}"
-          
-          # Then pop an item for that gang
-          loop do
-            # Get highest priority gang
-            gang_list = redis.zrange(pqueue_key, 0, 0)
-            gang = gang_list && gang_list.first
-            break nil unless gang  # Queue is empty, no more gangs
-
-            item = redis.lpop("pqueue:#{queue},gang:#{gang}")
-
-            # Delete gang if it's empty
-            redis.zrem(pqueue_key, gang) unless item
-
-            break item if item
+      module Worker
+        alias_method :dynamic_priority_original_queues, :queues
+        def queues
+          if @queues[0].start_with? '@'
+            # It's a queue group
+            Resque::Plugins::DynamicPriority.queues(@queues[0])
+          else
+            dynamic_priority_original_queues
           end
         end
-        decode item
+      end
+      
+      module DynamicPriorityJob
+        def after_enqueue
+          queue_group = queue_group_from_class
+          Resque::Plugins::DynamicPriority.touch_queue_priority(queue_group, queue_from_class) if
+            queue_group
+        end
+
+        def queue_group_from_class
+          klass = self.class
+          klass.instance_variable_get(:@queue_group) ||
+            (klass.respond_to?(:queue_group) and klass.queue_group)
+        end        
+
+        def queue_group_from_class
+          klass = self.class
+          klass.instance_variable_get(:@queue) ||
+            (klass.respond_to?(:queue) and klass.queue)
+        end        
       end
     end
   end
 end
 
-Resque.extend Resque::Plugins::DynamicPriority
+Resque::Worker.extend Resque::Plugins::DynamicPriority::Worker
