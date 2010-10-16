@@ -4,13 +4,13 @@ module Resque
       class ClosedQueueError < RuntimeError; end
 
       module Base
-
         extend self
         
         def update_priority(queue)
           priority = redis.hincrby('queue-work-done', queue, 1)
           start_time = redis.hget('queue-start-time', queue).to_i
           delta = Time.now.to_i - start_time
+          delta = 1 if delta == 0
           puts "Updating priority to: #{priority.to_f / delta}" # DEBUG
           set_queue_priority(queue, priority.to_f / delta)
         end
@@ -43,10 +43,9 @@ module Resque
           set_queue_priority(queue, 0)
         end
 
-        def queues(queue_group)
-          # No need to return all queues, since empty queues are actively removed
+        def queue(queue_group)
           queue_group = queue_group[1..-1]  # lop off @
-          redis.zrange("queue_group:#{queue_group}", 0, 5)  
+          redis.zrange("queue_group:#{queue_group}", 0, 0).first
         end
 
         def get_queue_group(queue)
@@ -93,18 +92,16 @@ module Resque
           super
         end
       end
-      
+            
       class PriorityWorker < ::Resque::Worker
-        def queues
-          ::Resque::Plugins::DynamicPriority::Base.queues(@queues.first)
+        def reserve
+          queue = ::Resque::Plugins::DynamicPriority::Base.queue(@queues.first)
+          return nil unless queue
+          job = ::Resque::Job.reserve(queue)
+          ::Resque::Plugins::DynamicPriority::Base.update_priority(queue) if job
+          job
         end
-      end
-      
-      module DynamicPriorityJob        
-        def before_perform_update_priority(*args)
-          ::Resque::Plugins::DynamicPriority::Base.update_priority(queue)
-        end        
-      end
+      end      
     end
   end
 end

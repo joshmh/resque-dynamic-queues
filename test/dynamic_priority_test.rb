@@ -4,8 +4,6 @@ class DynamicPriorityTest < Test::Unit::TestCase
   include Resque::Helpers
   
   class SampleWorker
-    extend Resque::Plugins::DynamicPriority::DynamicPriorityJob
-    
     def self.perform
       # Don't need to actually do anything
     end    
@@ -54,28 +52,16 @@ class DynamicPriorityTest < Test::Unit::TestCase
     assert_equal 'item', Resque.pop('queue')
   end
   
+  def test_job_override
+    job = Resque::Job.new('queue', 'payload')
+    job.perform
+  end
+  
   def test_prioritizing
-    Resque::Job.create(:slow, SampleWorker)
-    Resque::Job.create(:slow, SampleWorker)
-    Resque::Job.create(:slow, SampleWorker)
-    Resque::Job.create(:slow, SampleWorker)
-    Resque::Job.create(:slow, SampleWorker)
-    Resque::Job.create(:slow, SampleWorker)
-    Resque::Job.create(:slow, SampleWorker)
-    Resque::Job.create(:slow, SampleWorker)
-    Resque::Job.create(:slow, SampleWorker)
-    Resque::Job.create(:fast, SampleWorker)
-    Resque::Job.create(:fast, SampleWorker)
-    Resque::Job.create(:fast, SampleWorker)
-    Resque::Job.create(:fast, SampleWorker)
-    Resque::Job.create(:fast, SampleWorker)
-    Resque::Job.create(:fast, SampleWorker)
-    Resque::Job.create(:fast, SampleWorker)
-    Resque::Job.create(:fast, SampleWorker)
-    Resque::Job.create(:fast, SampleWorker)
-    Resque::Job.create(:fast, SampleWorker)
-    Resque::Plugins::DynamicPriority::Base.prioritize('group1', :slow)
-    Resque::Plugins::DynamicPriority::Base.prioritize('group1', :fast)
+    1.upto(10) { Resque::Job.create(:queue1, SampleWorker) }
+    1.upto(10) { Resque::Job.create(:queue2, SampleWorker) }
+    Resque::Plugins::DynamicPriority::Base.prioritize('group1', :queue1)
+    Resque::Plugins::DynamicPriority::Base.prioritize('group1', :queue2)
     worker = Resque::Plugins::DynamicPriority::PriorityWorker.new('@group1')
     
     pqueues = []
