@@ -5,6 +5,7 @@ require 'test/unit'
 require 'rubygems'
 require 'resque'
 require 'resque/plugins/dynamic_priority'
+require 'ruby-prof/test'
 
 begin
   require 'leftright'

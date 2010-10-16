@@ -5,24 +5,26 @@ module Resque
       class QueueGroupNamingError < RuntimeError; end
 
       module Base
-        RANDOM_ATTEMPTS   = 10
-        NUMBER_OF_QUEUES  = 5
+        # Number of times to attempt a random queue fetch before giving up
+        # and returning what we have. Higher numbers will give us more accurate
+        # modelling of the different queue probabilities, with the drawback
+        # of an occasional batch of many Redis calls. This should be changed
+        # as a function of the lowest probability queue in the system, but
+        # is unlikely to have much effect on average performance.
+        RANDOM_ATTEMPTS   = 20
+
+        # Number of queues to return from +queues+ method. Conceptually we only
+        # need to return one, because we immediately remove all empty queues, so
+        # we expect any queue to have jobs in it. However, since the operation isn't
+        # atomic, it's possible to still get an empty queue. If there's a lot of action
+        # going on, and this happens a lot, returning more queues would reduce the
+        # possibility of workers waiting for a new queue.
+        NUMBER_OF_QUEUES  = 1
         
         extend self
-                
-        def remove_priority_queue(queue)
-          # These are extra steps necessary to remove a priority queue,
-          # Redis.remove_queue should still be called, as well.
-          queue_group = redis.hget('queue-group-lookup', queue)
-          if queue_group
-            redis.hdel('queue-group-lookup', queue)
-            redis.hdel('queue-probability', queue)
-            redis.srem("queue_group:#{queue_group}", queue)
-          end
-        end
-        
+                        
         # Adds queue to priority group. Call this once all items have been enqueued.
-        # This will active the priority queue.
+        # This will active the priority queue. This should be called by the application.
         def prioritize(queue_group, queue, probability)
           # Note: The call order is important here. If set_queue_priority was called
           # first, it would be possible to empty out the queue via pop, without realizing
@@ -32,6 +34,17 @@ module Resque
           redis.hset('queue-group-lookup', queue, queue_group)
           redis.hset('queue-probability', queue, probability.to_s)
           redis.sadd("queue_group:#{queue_group}", queue)
+        end
+
+        def remove_priority_queue(queue)
+          # These are extra steps necessary to remove a priority queue,
+          # Redis.remove_queue should still be called, as well.
+          queue_group = redis.hget('queue-group-lookup', queue)
+          if queue_group
+            redis.hdel('queue-group-lookup', queue)
+            redis.hdel('queue-probability', queue)
+            redis.srem("queue_group:#{queue_group}", queue)
+          end
         end
 
         def random_attempts
@@ -81,9 +94,9 @@ module Resque
           # Priority queues only become active after all items have been added.
           # Therefore there are no race conditions involved when checking for an empty
           # priority queue, since once it's empty it will remain empty forever.
-          item = super(queue)
+          item = super
 
-          if item.nil?
+          if redis.llen("queue:#{queue}") == 0
             # If queue is empty and it's a priority queue, remove the queue.
             # This is necessary because queues are dynamically created and we
             # want all existing queues to be active. Otherwise we'd be constantly
