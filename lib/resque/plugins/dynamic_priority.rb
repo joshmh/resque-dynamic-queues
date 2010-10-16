@@ -33,6 +33,7 @@ module Resque
           # adding the queue to the group hash first can have no ill effect.
           redis.hset('queue-group-lookup', queue, queue_group)
           redis.hset('queue-probability', queue, probability.to_s)
+          redis.rpush('queue-new', queue)
           redis.sadd("queue_group:#{queue_group}", queue)
         end
 
@@ -64,6 +65,10 @@ module Resque
         end
         
         def queue(queue_group)
+          # First check for brand new queues
+          q = redis.lpop('queue-new')
+          return q if q
+          
           i = 0
           loop do
             queue = redis.srandmember("queue_group:#{queue_group}")
