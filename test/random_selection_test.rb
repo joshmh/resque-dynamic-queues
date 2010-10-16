@@ -12,6 +12,7 @@ class RandomSelectionTest < Test::Unit::TestCase
   def setup
     Resque.redis.flushall
     Resque::Plugins::RandomSelection::Base.number_of_queues = nil
+    srand
   end
   
   def test_lint
@@ -65,7 +66,26 @@ class RandomSelectionTest < Test::Unit::TestCase
     Resque::Plugins::RandomSelection::Base.number_of_queues = 11
     assert_equal 11, Resque::Plugins::RandomSelection::Base.number_of_queues
   end
-      
+
+  # TODO: Low level testing of queues, activate, remove_queue
+  
+  def test_pop_last_item_removes_queue
+    # Set this to 0.01 so that we'll trigger the queue-new list but we can
+    # be sure that queue will not be popped off that list
+    Resque::Plugins::RandomSelection::Base.quick_start_factor = 0.01
+
+    Resque.push('queue1', 'item')
+    Resque.push('queue1', 'item')
+    Resque::Plugins::RandomSelection::Base.activate('group1', 'queue1')
+    Resque.pop('queue1')
+    assert_equal 1, Resque.queues.size
+    assert_equal 1, Resque::Plugins::RandomSelection::Base.queues('group1').size
+    Resque.pop('queue1')
+    assert_equal 0, Resque.queues.size
+    assert_equal 0, Resque::Plugins::RandomSelection::Base.queues('group1').size
+    assert_equal 0, Resque.redis.llen('queue-new')
+  end
+  
   # Note: The algorithm used needs to be modified. All queues must be loaded
   # for each selection, along with start-time and work done. Scores must be
   # computed dynamically and the highest priority queue can then be selected.

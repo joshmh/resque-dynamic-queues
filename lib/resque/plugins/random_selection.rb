@@ -49,7 +49,7 @@ module Resque
           # adding the queue to the group hash first can have no ill effect.
           redis.hset('queue-group-lookup', queue, queue_group)
           redis.hset('queue-probability', queue, probability.to_s)
-          redis.rpush('queue-new', queue)
+          redis.rpush('queue-new', queue) if quick_start_factor > 0.0
           redis.sadd("queue_group:#{queue_group}", queue)
         end
 
@@ -61,6 +61,11 @@ module Resque
             redis.hdel('queue-group-lookup', queue)
             redis.hdel('queue-probability', queue)
             redis.srem("queue_group:#{queue_group}", queue)
+
+            # Note: This in an O(n) operation. Probably not a big deal because:
+            # 1. There shouldn't be a huge number of queues at any given time
+            # 2. There should be even less unprocessed queues at any given time
+            redis.lrem('queue-new', 1, queue) if quick_start_factor > 0.0
           end
         end
 
@@ -95,7 +100,7 @@ module Resque
         def queues(queue_group)
           qs = []
           1.upto(number_of_queues) { qs << queue(queue_group) }
-          qs.uniq
+          qs.compact.uniq
         end
         
         def get_queue_group(queue)
