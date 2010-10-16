@@ -41,7 +41,7 @@ module Resque
         # Adds queue to queue group. Call this once all items have been enqueued.
         # This will activate the queue. This should be called by the application
         # for dynamic queues (queues that will be run by RandomWorkers).
-        def activate(queue_group, queue, probability)
+        def activate(queue_group, queue, probability = 1.0)
           # Note: The call order is important here. If the queue was added to the
           # group set first, it would be possible to empty out the queue via pop, without 
           # realizing that it's a dynamic queue, and so the queue would never get deleted.
