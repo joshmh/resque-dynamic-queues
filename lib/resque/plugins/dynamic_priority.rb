@@ -23,7 +23,9 @@ module Resque
         def remove_priority_queue(queue)
           # These are extra steps necessary to remove a priority queue,
           # Redis.remove_queue should still be called, as well.
-          if queue_group = redis.hdel('queue-group-lookup', queue)
+          queue_group = redis.hget('queue-group-lookup', queue)
+          if queue_group
+            redis.hdel('queue-group-lookup', queue)
             redis.zrem("queue_group:#{queue_group}", queue)
             redis.hdel('queue-work-done', queue)
             redis.hdel('queue-start-time', queue)
@@ -45,6 +47,7 @@ module Resque
 
         def queue(queue_group)
           queue_group = queue_group[1..-1]  # lop off @
+          p redis.zrange("queue_group:#{queue_group}", 0, 5)
           redis.zrange("queue_group:#{queue_group}", 0, 0).first
         end
 
@@ -96,6 +99,7 @@ module Resque
       class PriorityWorker < ::Resque::Worker
         def reserve
           queue = ::Resque::Plugins::DynamicPriority::Base.queue(@queues.first)
+          puts "reserving #{queue}"
           return nil unless queue
           job = ::Resque::Job.reserve(queue)
           ::Resque::Plugins::DynamicPriority::Base.update_priority(queue) if job

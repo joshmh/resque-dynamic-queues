@@ -3,9 +3,15 @@ require File.dirname(__FILE__) + '/test_helper'
 class DynamicPriorityTest < Test::Unit::TestCase
   include Resque::Helpers
   
-  class SampleWorker
+  class FastWorker
     def self.perform
       # Don't need to actually do anything
+    end    
+  end
+  
+  class SlowWorker
+    def self.perform
+      sleep 1
     end    
   end
   
@@ -57,15 +63,18 @@ class DynamicPriorityTest < Test::Unit::TestCase
     job.perform
   end
   
+  # Note: The algorithm used needs to be modified. All queues must be loaded
+  # for each selection, along with start-time and work done. Scores must be
+  # computed dynamically and the highest priority queue can then be selected.
   def test_prioritizing
-    1.upto(10) { Resque::Job.create(:queue1, SampleWorker) }
-    1.upto(10) { Resque::Job.create(:queue2, SampleWorker) }
+    1.upto(15)  { Resque::Job.create(:queue1, FastWorker) }
+    1.upto(10) { Resque::Job.create(:queue2, SlowWorker) }
     Resque::Plugins::DynamicPriority::Base.prioritize('group1', :queue1)
     Resque::Plugins::DynamicPriority::Base.prioritize('group1', :queue2)
     worker = Resque::Plugins::DynamicPriority::PriorityWorker.new('@group1')
     
     pqueues = []
-    worker.work(0) do |job|
+    worker.work(1) do |job|
       pqueues << job.queue
     end
     
