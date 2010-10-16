@@ -13,7 +13,7 @@ class DynamicPriorityTest < Test::Unit::TestCase
   def setup
     Resque.redis.namespace = "resque-dynamic-priority:test"
     Resque.redis.flushall
-    srand
+    Resque::Plugins::DynamicPriority::Base.number_of_queues = nil
   end
   
   def test_lint
@@ -53,7 +53,15 @@ class DynamicPriorityTest < Test::Unit::TestCase
     Resque.push('queue', 'item')
     assert_equal 'item', Resque.pop('queue')
   end
-    
+  
+  def test_set_number_of_queues
+    assert_equal 1, Resque::Plugins::DynamicPriority::Base.number_of_queues
+    Resque::Plugins::DynamicPriority::Base.number_of_queues = 7
+    assert_equal 7, Resque::Plugins::DynamicPriority::Base.number_of_queues
+    Resque::Plugins::DynamicPriority::Base.number_of_queues = 11
+    assert_equal 11, Resque::Plugins::DynamicPriority::Base.number_of_queues
+  end
+      
   # Note: The algorithm used needs to be modified. All queues must be loaded
   # for each selection, along with start-time and work done. Scores must be
   # computed dynamically and the highest priority queue can then be selected.

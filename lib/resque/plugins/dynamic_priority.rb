@@ -18,11 +18,19 @@ module Resque
         # we expect any queue to have jobs in it. However, since the operation isn't
         # atomic, it's possible to still get an empty queue. If there's a lot of action
         # going on, and this happens a lot, returning more queues would reduce the
-        # possibility of workers waiting for a new queue.
+        # possibility of workers waiting for a new queue. Setting to high values
+        # has a big impact on performance.
         NUMBER_OF_QUEUES  = 1
         
+        # A fraction between 0.0 and 1.0 determining how much weight to give brand new queues.
+        # If 1.0, the next queue chosen will always be a new one if a new queue exists.
+        # If 0.0 there will be no bias towards new queues.
+        QUICK_START_FACTOR = 0.5
+        
         extend self
-                        
+        
+        attr_writer :number_of_queues, :random_attempts, :quick_start_factor
+        
         # Adds queue to priority group. Call this once all items have been enqueued.
         # This will active the priority queue. This should be called by the application.
         def prioritize(queue_group, queue, probability)
@@ -51,23 +59,20 @@ module Resque
         def random_attempts
           @random_attempts ||= RANDOM_ATTEMPTS
         end
-        
-        def random_attempts=(ra)
-          @random_attempts = ra
-        end
-        
+                
         def number_of_queues
           @number_of_queues ||= NUMBER_OF_QUEUES
         end
 
-        def number_of_queues=(nq)
-          @number_of_queues = nq
+        def quick_start_factor
+          @quick_start_factor ||= QUICK_START_FACTOR
         end
         
         def queue(queue_group)
           # First check for brand new queues
-          q = redis.lpop('queue-new')
-          return q if q
+          if rand < quick_start_factor
+            q = redis.lpop('queue-new') and return q
+          end
           
           i = 0
           loop do
