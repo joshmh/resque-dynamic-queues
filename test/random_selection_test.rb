@@ -1,8 +1,7 @@
 require File.dirname(__FILE__) + '/test_helper'
 
-class DynamicPriorityTest < Test::Unit::TestCase
+class RandomSelectionTest < Test::Unit::TestCase
   include Resque::Helpers
-#  include RubyProf::Test
   
   class TestWorker
     def self.perform
@@ -11,14 +10,13 @@ class DynamicPriorityTest < Test::Unit::TestCase
   end
     
   def setup
-    Resque.redis.namespace = "resque-dynamic-priority:test"
     Resque.redis.flushall
-    Resque::Plugins::DynamicPriority::Base.number_of_queues = nil
+    Resque::Plugins::RandomSelection::Base.number_of_queues = nil
   end
   
   def test_lint
     assert_nothing_raised do
-      Resque::Plugin.lint(Resque::Plugins::DynamicPriority)
+      Resque::Plugin.lint(Resque::Plugins::RandomSelection)
     end
   end
 
@@ -30,16 +28,16 @@ class DynamicPriorityTest < Test::Unit::TestCase
 
   # Need to run all Resque tests after plugin is patched in
   def test_push_to_new_active_queue
-    Resque::Plugins::DynamicPriority::Base.prioritize('group1', 'queue1', 1)
-    assert_raise(Resque::Plugins::DynamicPriority::ClosedQueueError) do
+    Resque::Plugins::RandomSelection::Base.activate('group1', 'queue1', 1)
+    assert_raise(Resque::Plugins::RandomSelection::ClosedQueueError) do
       Resque.push('queue1', 'item1')
     end
   end
 
   def test_push_to_existing_active_queue
     assert_nothing_raised { Resque.push('queue1', 'item1') }
-    Resque::Plugins::DynamicPriority::Base.prioritize('group1', 'queue1', 1)
-    assert_raise(Resque::Plugins::DynamicPriority::ClosedQueueError) do
+    Resque::Plugins::RandomSelection::Base.activate('group1', 'queue1', 1)
+    assert_raise(Resque::Plugins::RandomSelection::ClosedQueueError) do
       Resque.push('queue1', 'item2')
     end
   end
@@ -54,25 +52,31 @@ class DynamicPriorityTest < Test::Unit::TestCase
     assert_equal 'item', Resque.pop('queue')
   end
   
+  def test_run_without_queue_setup
+    assert_nothing_raised do
+      worker = Resque::Plugins::RandomSelection::RandomSelectionWorker.new('@group1')
+    end
+  end
+  
   def test_set_number_of_queues
-    assert_equal 1, Resque::Plugins::DynamicPriority::Base.number_of_queues
-    Resque::Plugins::DynamicPriority::Base.number_of_queues = 7
-    assert_equal 7, Resque::Plugins::DynamicPriority::Base.number_of_queues
-    Resque::Plugins::DynamicPriority::Base.number_of_queues = 11
-    assert_equal 11, Resque::Plugins::DynamicPriority::Base.number_of_queues
+    assert_equal 1, Resque::Plugins::RandomSelection::Base.number_of_queues
+    Resque::Plugins::RandomSelection::Base.number_of_queues = 7
+    assert_equal 7, Resque::Plugins::RandomSelection::Base.number_of_queues
+    Resque::Plugins::RandomSelection::Base.number_of_queues = 11
+    assert_equal 11, Resque::Plugins::RandomSelection::Base.number_of_queues
   end
       
   # Note: The algorithm used needs to be modified. All queues must be loaded
   # for each selection, along with start-time and work done. Scores must be
   # computed dynamically and the highest priority queue can then be selected.
-  def test_prioritizing
-    1.upto(100)  { Resque::Job.create(:queue1, TestWorker) }
-    1.upto(100) { Resque::Job.create(:queue2, TestWorker) }
-    1.upto(50) { Resque::Job.create(:queue3, TestWorker) }
-    Resque::Plugins::DynamicPriority::Base.prioritize('group1', :queue1, 1)
-    Resque::Plugins::DynamicPriority::Base.prioritize('group1', :queue2, 0.25)
-    Resque::Plugins::DynamicPriority::Base.prioritize('group1', :queue3, 0.5)
-    worker = Resque::Plugins::DynamicPriority::PriorityWorker.new('@group1')
+  def test_work
+    1.upto(100)   { Resque::Job.create(:queue1, TestWorker) }
+    1.upto(100)   { Resque::Job.create(:queue2, TestWorker) }
+    1.upto(50)    { Resque::Job.create(:queue3, TestWorker) }
+    Resque::Plugins::RandomSelection::Base.activate('group1', :queue1, 1)
+    Resque::Plugins::RandomSelection::Base.activate('group1', :queue2, 0.25)
+    Resque::Plugins::RandomSelection::Base.activate('group1', :queue3, 0.5)
+    worker = Resque::Plugins::RandomSelection::RandomSelectionWorker.new('@group1')
     
     pqueues = []
     worker.work(0) do |job|

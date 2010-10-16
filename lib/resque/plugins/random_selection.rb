@@ -1,6 +1,13 @@
 module Resque
   module Plugins
-    module DynamicPriority      
+    module RandomSelection  
+      # This plugin does two things. It implements the concept of dynamic queues
+      # and it implements random queue selection. Dynamic queues are queues that
+      # are automatically removed when they're empty, allowing queues to mirror
+      # transient objects in the app.
+      # Random queue selection means the worker will pick a queue at random. Since
+      # all the queues are active (they have jobs), the first chosen random queue
+      # will be usable.    
       class ClosedQueueError < RuntimeError; end
       class QueueGroupNamingError < RuntimeError; end
 
@@ -31,12 +38,13 @@ module Resque
         
         attr_writer :number_of_queues, :random_attempts, :quick_start_factor
         
-        # Adds queue to priority group. Call this once all items have been enqueued.
-        # This will active the priority queue. This should be called by the application.
-        def prioritize(queue_group, queue, probability)
-          # Note: The call order is important here. If set_queue_priority was called
-          # first, it would be possible to empty out the queue via pop, without realizing
-          # that it's a priority queue, and so the queue would never get deleted.
+        # Adds queue to queue group. Call this once all items have been enqueued.
+        # This will activate the queue. This should be called by the application
+        # for dynamic queues (queues that will be run by RandomWorkers).
+        def activate(queue_group, queue, probability)
+          # Note: The call order is important here. If the queue was added to the
+          # group set first, it would be possible to empty out the queue via pop, without 
+          # realizing that it's a dynamic queue, and so the queue would never get deleted.
           # Since there is no access to the queue until queue is added to group set
           # adding the queue to the group hash first can have no ill effect.
           redis.hset('queue-group-lookup', queue, queue_group)
@@ -101,19 +109,19 @@ module Resque
       
       module Resque
         def pop(queue)
-          # Priority queues only become active after all items have been added.
+          # Dynamic queues only become active after all items have been added.
           # Therefore there are no race conditions involved when checking for an empty
-          # priority queue, since once it's empty it will remain empty forever.
+          # dynamic queue, since once it's empty it will remain empty forever.
           item = super
 
           if redis.llen("queue:#{queue}") == 0
-            # If queue is empty and it's a priority queue, remove the queue.
+            # If queue is empty and it's a dynamic queue, remove the queue.
             # This is necessary because queues are dynamically created and we
             # want all existing queues to be active. Otherwise we'd be constantly
             # processing empty queues, and the number of queues would grow forever.
-            queue_group = Plugins::DynamicPriority::Base.get_queue_group(queue)
+            queue_group = Plugins::RandomSelection::Base.get_queue_group(queue)
             if queue_group
-              # Queue is a priority queue, since it belongs to a group, so it's safe to remove
+              # Queue is a dynamic queue, since it belongs to a group, so it's safe to remove
               remove_queue(queue)
             end
           end
@@ -122,32 +130,32 @@ module Resque
         end
         
         def push(queue, item)
-          # If it's a priority queue, pushing is only allowed before it's activated
-          raise Plugins::DynamicPriority::ClosedQueueError,
+          # If it's a dynamic queue, pushing is only allowed before it's activated
+          raise Plugins::RandomSelection::ClosedQueueError,
             "Attempted to push to the activated priority queue: #{queue}" if
-            Plugins::DynamicPriority::Base.get_queue_group(queue)
+            Plugins::RandomSelection::Base.get_queue_group(queue)
           super
         end
         
         def remove_queue(queue)
-          Plugins::DynamicPriority::Base.remove_priority_queue(queue)
+          Plugins::RandomSelection::Base.remove_priority_queue(queue)
           super
         end
       end
             
-      class PriorityWorker < ::Resque::Worker
+      class RandomSelectionWorker < ::Resque::Worker
         def queues
           queue = @queues.first
-          raise ::Resque::Plugins::DynamicPriority::QueueGroupNamingError, 
-            "When using a PriorityWorker, you must supply a queue group, instead " +
+          raise ::Resque::Plugins::RandomSelection::QueueGroupNamingError, 
+            "When using a RandomSelectionWorker, you must supply a queue group, instead " +
             "of a queue, and the queue group must be prefixed with @, as in @mailings" if
             !queue.start_with?('@')
             
-          ::Resque::Plugins::DynamicPriority::Base.queues(queue[1..-1])
+          ::Resque::Plugins::RandomSelection::Base.queues(queue[1..-1])
         end
       end      
     end
   end
 end
 
-Resque.extend Resque::Plugins::DynamicPriority::Resque
+Resque.extend Resque::Plugins::RandomSelection::Resque

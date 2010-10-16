@@ -25,6 +25,7 @@ else
   end
 end
 
+=begin
 #
 # Gems
 #
@@ -47,3 +48,4 @@ rescue LoadError
   warn "mg not available."
   warn "Install it with: gem i mg"
 end
+=end

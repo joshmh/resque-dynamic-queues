@@ -4,8 +4,7 @@ $TESTING = true
 require 'test/unit'
 require 'rubygems'
 require 'resque'
-require 'resque/plugins/dynamic_priority'
-require 'ruby-prof/test'
+require 'resque/plugins/random_selection'
 
 begin
   require 'leftright'
