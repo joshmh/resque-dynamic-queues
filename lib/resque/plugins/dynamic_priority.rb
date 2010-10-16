@@ -2,55 +2,71 @@ module Resque
   module Plugins
     module DynamicPriority      
       class ClosedQueueError < RuntimeError; end
+      class QueueGroupNamingError < RuntimeError; end
 
       module Base
+        RANDOM_ATTEMPTS   = 10
+        NUMBER_OF_QUEUES  = 5
+        
         extend self
-        
-        def update_priority(queue)
-          priority = redis.hincrby('queue-work-done', queue, 1)
-          start_time = redis.hget('queue-start-time', queue).to_i
-          delta = Time.now.to_i - start_time
-          delta = 1 if delta == 0
-          puts "Updating priority to: #{priority.to_f / delta}" # DEBUG
-          set_queue_priority(queue, priority.to_f / delta)
-        end
-        
-        def set_queue_priority(queue, score)
-          queue_group = get_queue_group(queue)
-          redis.zadd("queue_group:#{queue_group}", score, queue) if queue_group
-        end
-
+                
         def remove_priority_queue(queue)
           # These are extra steps necessary to remove a priority queue,
           # Redis.remove_queue should still be called, as well.
           queue_group = redis.hget('queue-group-lookup', queue)
           if queue_group
             redis.hdel('queue-group-lookup', queue)
-            redis.zrem("queue_group:#{queue_group}", queue)
-            redis.hdel('queue-work-done', queue)
-            redis.hdel('queue-start-time', queue)
+            redis.hdel('queue-probability', queue)
+            redis.srem("queue_group:#{queue_group}", queue)
           end
         end
         
         # Adds queue to priority group. Call this once all items have been enqueued.
         # This will active the priority queue.
-        def prioritize(queue_group, queue)
+        def prioritize(queue_group, queue, probability)
           # Note: The call order is important here. If set_queue_priority was called
           # first, it would be possible to empty out the queue via pop, without realizing
           # that it's a priority queue, and so the queue would never get deleted.
-          # Since there is no access to the queue until set_queue_priority is set
+          # Since there is no access to the queue until queue is added to group set
           # adding the queue to the group hash first can have no ill effect.
           redis.hset('queue-group-lookup', queue, queue_group)
-          redis.hset('queue-start-time', queue, Time.now.to_i)
-          set_queue_priority(queue, 0)
+          redis.hset('queue-probability', queue, probability.to_s)
+          redis.sadd("queue_group:#{queue_group}", queue)
         end
 
+        def random_attempts
+          @random_attempts ||= RANDOM_ATTEMPTS
+        end
+        
+        def random_attempts=(ra)
+          @random_attempts = ra
+        end
+        
+        def number_of_queues
+          @number_of_queues ||= NUMBER_OF_QUEUES
+        end
+
+        def number_of_queues=(nq)
+          @number_of_queues = nq
+        end
+        
         def queue(queue_group)
-          queue_group = queue_group[1..-1]  # lop off @
-          p redis.zrange("queue_group:#{queue_group}", 0, 5)
-          redis.zrange("queue_group:#{queue_group}", 0, 0).first
+          i = 0
+          loop do
+            queue = redis.srandmember("queue_group:#{queue_group}")
+            break queue if i > random_attempts
+            probability = redis.hget('queue-probability', queue).to_f
+            break queue if rand < probability
+            i += 1
+          end
         end
 
+        def queues(queue_group)
+          qs = []
+          1.upto(number_of_queues) { qs << queue(queue_group) }
+          qs.uniq
+        end
+        
         def get_queue_group(queue)
           redis.hget('queue-group-lookup', queue)
         end
@@ -97,13 +113,14 @@ module Resque
       end
             
       class PriorityWorker < ::Resque::Worker
-        def reserve
-          queue = ::Resque::Plugins::DynamicPriority::Base.queue(@queues.first)
-          puts "reserving #{queue}"
-          return nil unless queue
-          job = ::Resque::Job.reserve(queue)
-          ::Resque::Plugins::DynamicPriority::Base.update_priority(queue) if job
-          job
+        def queues
+          queue = @queues.first
+          raise ::Resque::Plugins::DynamicPriority::QueueGroupNamingError, 
+            "When using a PriorityWorker, you must supply a queue group, instead " +
+            "of a queue, and the queue group must be prefixed with @, as in @mailings" if
+            !queue.start_with?('@')
+            
+          ::Resque::Plugins::DynamicPriority::Base.queues(queue[1..-1])
         end
       end      
     end

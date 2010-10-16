@@ -3,18 +3,12 @@ require File.dirname(__FILE__) + '/test_helper'
 class DynamicPriorityTest < Test::Unit::TestCase
   include Resque::Helpers
   
-  class FastWorker
+  class TestWorker
     def self.perform
       # Don't need to actually do anything
     end    
   end
-  
-  class SlowWorker
-    def self.perform
-      sleep 1
-    end    
-  end
-  
+    
   def setup
     Resque.redis.namespace = "resque-dynamic-priority:test"
     Resque.redis.flushall
@@ -34,7 +28,7 @@ class DynamicPriorityTest < Test::Unit::TestCase
 
   # Need to run all Resque tests after plugin is patched in
   def test_push_to_new_active_queue
-    Resque::Plugins::DynamicPriority::Base.prioritize('group1', 'queue1')
+    Resque::Plugins::DynamicPriority::Base.prioritize('group1', 'queue1', 1)
     assert_raise(Resque::Plugins::DynamicPriority::ClosedQueueError) do
       Resque.push('queue1', 'item1')
     end
@@ -42,7 +36,7 @@ class DynamicPriorityTest < Test::Unit::TestCase
 
   def test_push_to_existing_active_queue
     assert_nothing_raised { Resque.push('queue1', 'item1') }
-    Resque::Plugins::DynamicPriority::Base.prioritize('group1', 'queue1')
+    Resque::Plugins::DynamicPriority::Base.prioritize('group1', 'queue1', 1)
     assert_raise(Resque::Plugins::DynamicPriority::ClosedQueueError) do
       Resque.push('queue1', 'item2')
     end
@@ -57,25 +51,21 @@ class DynamicPriorityTest < Test::Unit::TestCase
     Resque.push('queue', 'item')
     assert_equal 'item', Resque.pop('queue')
   end
-  
-  def test_job_override
-    job = Resque::Job.new('queue', 'payload')
-    job.perform
-  end
-  
+    
   # Note: The algorithm used needs to be modified. All queues must be loaded
   # for each selection, along with start-time and work done. Scores must be
   # computed dynamically and the highest priority queue can then be selected.
   def test_prioritizing
-    1.upto(15)  { Resque::Job.create(:queue1, FastWorker) }
-    1.upto(10) { Resque::Job.create(:queue2, SlowWorker) }
-    Resque::Plugins::DynamicPriority::Base.prioritize('group1', :queue1)
-    Resque::Plugins::DynamicPriority::Base.prioritize('group1', :queue2)
+    1.upto(15)  { Resque::Job.create(:queue1, TestWorker) }
+    1.upto(10) { Resque::Job.create(:queue2, TestWorker) }
+    Resque::Plugins::DynamicPriority::Base.prioritize('group1', :queue1, 1)
+    Resque::Plugins::DynamicPriority::Base.prioritize('group1', :queue2, 0.25)
     worker = Resque::Plugins::DynamicPriority::PriorityWorker.new('@group1')
     
     pqueues = []
-    worker.work(1) do |job|
+    worker.work(0) do |job|
       pqueues << job.queue
+      #p pqueues
     end
     
     p pqueues
