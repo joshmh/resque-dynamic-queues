@@ -3,3 +3,4 @@ test/dump.rdb
 pkg/
 .yardoc/
 resque-random-selection.gemspec
+doc/
