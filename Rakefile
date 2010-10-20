@@ -10,6 +10,7 @@ begin
     gem.email = "joshmh@gmail.com"
     gem.homepage = "http://github.com/joshmh/resque-random-selection"
     gem.authors = ["Josh Harvey"]
+    gem.add_development_dependency "yard", ">= 0"
     gem.add_dependency('resque', '>= 1.10.0')
     # gem is a Gem::Specification... see http://www.rubygems.org/read/chapter/20 for additional settings
   end
@@ -18,26 +19,11 @@ rescue LoadError
   puts "Jeweler (or a dependency) not available. Install it with: gem install jeweler"
 end
 
-task :default => :test
-
-def command?(command)
-  system("type #{command} > /dev/null")
-end
-
 require 'rake/testtask'
-if command? :turn
-  desc "Run tests"
-  task :test do
-    suffix = "-n #{ENV['TEST']}" if ENV['TEST']
-    sh "turn test/*.rb #{suffix}"
-  end
-else
-  Rake::TestTask.new do |t|
-    t.libs << 'lib'
-    t.pattern = 'test/**/*_test.rb'
-    t.verbose = true
-  end
-  task :test => :check_dependencies
+Rake::TestTask.new(:test) do |test|
+  test.libs << 'lib' << 'test'
+  test.pattern = 'test/**/test_*.rb'
+  test.verbose = true
 end
 
 begin
@@ -53,12 +39,18 @@ rescue LoadError
   end
 end
 
-require 'rake/rdoctask'
-Rake::RDocTask.new do |rdoc|
-  version = File.exist?('VERSION') ? File.read('VERSION') : ""
+task :test => :check_dependencies
 
-  rdoc.rdoc_dir = 'rdoc'
-  rdoc.title = "resque-random-selection #{version}"
-  rdoc.rdoc_files.include('README*')
-  rdoc.rdoc_files.include('lib/**/*.rb')
+task :default => :test
+
+begin
+  require 'yard'
+  YARD::Rake::YardocTask.new do |conf|
+    conf.options = ['-mmarkdown', '--readme README.md']
+    conf.files = ['lib/**/*.rb', '-', 'LICENSE', 'README.md' ]
+  end  
+rescue LoadError
+  task :yardoc do
+    abort "YARD is not available. In order to run yardoc, you must: sudo gem install yard"
+  end
 end

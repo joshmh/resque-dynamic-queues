@@ -1,25 +1,33 @@
+require 'resque'
+
 module Resque
   module Plugins
-    module RandomSelection  
-      # This plugin does two things. It implements the concept of dynamic queues
-      # and it implements random queue selection. Dynamic queues are queues that
-      # are automatically removed when they're empty, allowing queues to mirror
-      # transient objects in the app.
-      # Random queue selection means the worker will pick a queue at random. Since
-      # all the queues are active (they have jobs), the first chosen random queue
-      # will be usable.    
+    # This plugin does two things. It implements the concept of dynamic queues
+    # and it implements random queue selection. Dynamic queues are queues that
+    # are automatically removed when they're empty, allowing queues to mirror
+    # transient objects in the app.
+    # Random queue selection means the worker will pick a queue at random. Since
+    # all the queues are active (they have jobs), the first chosen random queue
+    # will be usable.    
+    module RandomSelection
       class ClosedQueueError < RuntimeError; end
       class QueueGroupNamingError < RuntimeError; end
 
       module Base
+        RANDOM_ATTEMPTS   = 20    # @private
+        NUMBER_OF_QUEUES  = 1     # @private
+        QUICK_START_FACTOR = 0.5  # @private
+        
+        extend self
+        
         # Number of times to attempt a random queue fetch before giving up
         # and returning what we have. Higher numbers will give us more accurate
         # modelling of the different queue probabilities, with the drawback
         # of an occasional batch of many Redis calls. This should be changed
         # as a function of the lowest probability queue in the system, but
         # is unlikely to have much effect on average performance.
-        RANDOM_ATTEMPTS   = 20
-
+        attr_writer :number_of_queues
+        
         # Number of queues to return from +queues+ method. Conceptually we only
         # need to return one, because we immediately remove all empty queues, so
         # we expect any queue to have jobs in it. However, since the operation isn't
@@ -27,16 +35,12 @@ module Resque
         # going on, and this happens a lot, returning more queues would reduce the
         # possibility of workers waiting for a new queue. Setting to high values
         # has a big impact on performance.
-        NUMBER_OF_QUEUES  = 1
+        attr_writer :random_attempts
         
         # A fraction between 0.0 and 1.0 determining how much weight to give brand new queues.
         # If 1.0, the next queue chosen will always be a new one if a new queue exists.
         # If 0.0 there will be no bias towards new queues.
-        QUICK_START_FACTOR = 0.5
-        
-        extend self
-        
-        attr_writer :number_of_queues, :random_attempts, :quick_start_factor
+        attr_writer :quick_start_factor
         
         # Adds queue to queue group. Call this once all items have been enqueued.
         # This will activate the queue. This should be called by the application
