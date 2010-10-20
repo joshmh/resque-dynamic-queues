@@ -14,9 +14,9 @@ module Resque
       class QueueGroupNamingError < RuntimeError; end
 
       module Base
-        RANDOM_ATTEMPTS   = 20    # @private
-        NUMBER_OF_QUEUES  = 1     # @private
-        QUICK_START_FACTOR = 0.5  # @private
+        RANDOM_ATTEMPTS   = 20
+        NUMBER_OF_QUEUES  = 1
+        QUICK_START_FACTOR = 0.5
         
         extend self
         
@@ -42,6 +42,10 @@ module Resque
         # If 0.0 there will be no bias towards new queues.
         attr_writer :quick_start_factor
         
+        # Forces usage of quick start queue, even if quick_start_factor is 0.0.
+        # Useful for testing and debugging.
+        attr_writer :force_quick_start
+        
         # Adds queue to queue group. Call this once all items have been enqueued.
         # This will activate the queue. This should be called by the application
         # for dynamic queues (queues that will be run by RandomWorkers).
@@ -53,7 +57,7 @@ module Resque
           # adding the queue to the group hash first can have no ill effect.
           redis.hset('queue-group-lookup', queue, queue_group)
           redis.hset('queue-probability', queue, probability.to_s)
-          redis.rpush('queue-new', queue) if quick_start_factor > 0.0
+          redis.rpush('queue-new', queue) if force_quick_start || quick_start_factor > 0.0
           redis.sadd("queue_group:#{queue_group}", queue)
         end
 
@@ -65,11 +69,6 @@ module Resque
             redis.hdel('queue-group-lookup', queue)
             redis.hdel('queue-probability', queue)
             redis.srem("queue_group:#{queue_group}", queue)
-
-            # Note: This in an O(n) operation. Probably not a big deal because:
-            # 1. There shouldn't be a huge number of queues at any given time
-            # 2. There should be even less unprocessed queues at any given time
-            redis.lrem('queue-new', 1, queue) if quick_start_factor > 0.0
           end
         end
 
@@ -85,10 +84,19 @@ module Resque
           @quick_start_factor ||= QUICK_START_FACTOR
         end
         
+        def force_quick_start
+          @force_quick_start.nil? ? ( @force_quick_start = false ) : @force_quick_start
+        end
+        
         def queue(queue_group)
           # First check for brand new queues
-          if rand < quick_start_factor
-            q = redis.lpop('queue-new') and return q
+          if quick_start_factor > 0.0 && rand < quick_start_factor
+            loop do
+              q = redis.lpop('queue-new') or break
+              
+              # Now check if the queue is still around, otherwise keep popping
+              return q if queue_exists?(q)
+            end
           end
           
           i = 0
@@ -111,6 +119,10 @@ module Resque
           redis.hget('queue-group-lookup', queue)
         end
       
+        def queue_exists?(queue)
+          redis.sismember('queues', queue)
+        end
+        
         def redis
           ::Resque.redis
         end

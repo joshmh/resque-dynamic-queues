@@ -3,7 +3,7 @@ require File.dirname(__FILE__) + '/test_helper'
 class RandomSelectionTest < Test::Unit::TestCase
   include Resque::Helpers
   
-  class TestWorker
+  class TestJob
     def self.perform
       # Don't need to actually do anything
     end    
@@ -12,6 +12,8 @@ class RandomSelectionTest < Test::Unit::TestCase
   def setup
     Resque.redis.flushall
     Resque::Plugins::RandomSelection::Base.number_of_queues = nil
+    Resque::Plugins::RandomSelection::Base.quick_start_factor = nil
+
     srand
   end
   
@@ -67,19 +69,44 @@ class RandomSelectionTest < Test::Unit::TestCase
     assert_equal 11, Resque::Plugins::RandomSelection::Base.number_of_queues
   end
 
+  def test_queue_exists
+    Resque.push('queue1', 'item')
+    assert Resque::Plugins::RandomSelection::Base.queue_exists?('queue1')
+    assert !Resque::Plugins::RandomSelection::Base.queue_exists?('queue2')
+    assert Resque::Plugins::RandomSelection::Base.queue_exists?('queue1')
+    Resque::Plugins::RandomSelection::Base.activate('group1', 'queue1')
+    Resque.pop('queue1')
+    assert !Resque::Plugins::RandomSelection::Base.queue_exists?('queue1')    
+  end
+  
   # TODO: Low level testing of queues, activate, remove_queue
 
-  # TODO
+  # Checks to see if the quick start queue is getting cleaned up as
+  # we pop off queues.
   def test_queue_new_handles_emptied_queues
+    Resque::Plugins::RandomSelection::Base.quick_start_factor = 1.0
     assert_equal 0, Resque.redis.llen('queue-new')
-    flunk "Test needs to be written"
+
+    # Populate queues
+    Resque.push('queue1', 'item')
+    Resque.push('queue2', 'item')
+    Resque::Plugins::RandomSelection::Base.activate('group1', 'queue1')
+    Resque::Plugins::RandomSelection::Base.activate('group1', 'queue2')
+
+    # Pop from the first queue, extinguishing the queue
+    Resque.pop('queue1')
+    assert !Resque::Plugins::RandomSelection::Base.queue_exists?('queue1')    
+
+    # Since we never asked for a queue yet, neither queue was popped from queue-new
+    assert_equal 2, Resque.redis.llen('queue-new')    
+
+    # Now we request a queue, this should pull off the first queue, discard it, and
+    # give us the second queue
+    assert_equal 'queue2', Resque::Plugins::RandomSelection::Base.queue('group1')
+    assert_equal 0, Resque.redis.llen('queue-new')    
   end
   
   def test_pop_last_item_removes_queue
-    # Set this to 0.01 so that we'll trigger the queue-new list but we can
-    # be sure that queue will not be popped off that list
-    Resque::Plugins::RandomSelection::Base.quick_start_factor = 0.01
-
     Resque.push('queue1', 'item')
     Resque.push('queue1', 'item')
     Resque::Plugins::RandomSelection::Base.activate('group1', 'queue1')
@@ -91,13 +118,10 @@ class RandomSelectionTest < Test::Unit::TestCase
     assert_equal 0, Resque::Plugins::RandomSelection::Base.queues('group1').size
   end
   
-  # Note: The algorithm used needs to be modified. All queues must be loaded
-  # for each selection, along with start-time and work done. Scores must be
-  # computed dynamically and the highest priority queue can then be selected.
   def test_work
-    1.upto(100)   { Resque::Job.create(:queue1, TestWorker) }
-    1.upto(100)   { Resque::Job.create(:queue2, TestWorker) }
-    1.upto(50)    { Resque::Job.create(:queue3, TestWorker) }
+    1.upto(100)   { Resque::Job.create(:queue1, TestJob) }
+    1.upto(75)    { Resque::Job.create(:queue2, TestJob) }
+    1.upto(50)    { Resque::Job.create(:queue3, TestJob) }
     Resque::Plugins::RandomSelection::Base.activate('group1', :queue1, 1)
     Resque::Plugins::RandomSelection::Base.activate('group1', :queue2, 0.25)
     Resque::Plugins::RandomSelection::Base.activate('group1', :queue3, 0.5)
@@ -108,23 +132,117 @@ class RandomSelectionTest < Test::Unit::TestCase
       pqueues << job.queue
     end
     
-    puts
-    p pqueues
     k = 20
-    puts
-    puts "first #{k}, queue1: #{compute_halftime(pqueues, 'queue1', k)}"
-    puts
-    puts "first #{k}, queue2: #{compute_halftime(pqueues, 'queue2', k)}"
-    puts
-    puts "first #{k}, queue3: #{compute_halftime(pqueues, 'queue3', k)}"
+    n1 = compute_first_n pqueues, 'queue1', k
+    n2 = compute_first_n pqueues, 'queue2', k
+    n3 = compute_first_n pqueues, 'queue3', k
+    pqsize = pqueues.size
+    n_total = (pqsize - n1) + (pqsize - n2) + (pqsize - n3)    # Sum of queues distributions
+    p_total = 1 + 0.25 + 0.5  # Sum of queue probabilities
+    
+    assert_in_delta 1.0  / p_total, (pqsize - n1).to_f / n_total, 0.2
+    assert_in_delta 0.25 / p_total, (pqsize - n2).to_f / n_total, 0.2
+    assert_in_delta 0.5  / p_total, (pqsize - n3).to_f / n_total, 0.2
+    
+    assert_equal 100, pqueues.count('queue1')
+    assert_equal 75,  pqueues.count('queue2')
+    assert_equal 50,  pqueues.count('queue3')
   end
   
-  # Compute the index in the array where half of the jobs of type +item+ were finished
-  def compute_halftime(array, item, k)
-    index = 0
-    c = 0
-    puts "number of jobs for #{item}: #{array.count(item)}"
-    array.each {|i| c += 1 if i == item; break unless c < k; index += 1; }
+  def test_no_starvation
+    # Note: This isn't a rigorous statistical test. If it happens to fail but is reasonably
+    # close to the expected values, it still works.
+    
+    # Make the test harder, don't let queues quick start
+    Resque::Plugins::RandomSelection::Base.quick_start_factor = 0.0
+
+    n   = 20  # Number of queues
+    k   = 3   # Number of queue appearances to sample for
+    nj  = 30  # Number of jobs per queue
+
+    1.upto(n) do |i|
+      1.upto(30) { Resque::Job.create("queue#{i}", TestJob) }
+      Resque::Plugins::RandomSelection::Base.activate('group1', "queue#{i}")
+    end
+
+    worker = Resque::Plugins::RandomSelection::RandomSelectionWorker.new('@group1')
+    
+    pqueues = []
+    worker.work(0) do |job|
+      pqueues << job.queue
+    end
+    pqueue_size = pqueues.size
+    
+    # All queues should get a chance after a number of iterations that's
+    # reasonably close to the number of total queues.
+    max_expected = n * k * 2
+    1.upto(n) do |i|
+      first_n = compute_first_n(pqueues, "queue#{i}", k)
+      assert first_n < max_expected, 
+        "Queue#{i} only showed up #{k} times #{(first_n * 100) / pqueue_size}% of the " +
+        "way through. #{first_n} was expected to be less than #{max_expected}."
+    end
+  end
+  
+  def test_no_starvation_dynamic
+    # Attempts to model a more realistic scenario where jobs are being added and
+    # completed all the time.
+
+    # Make the test harder, don't let queues quick start
+    Resque::Plugins::RandomSelection::Base.quick_start_factor = 0.0
+
+    nq = 20       # Number of initial queues
+    nj = 10       # Jobs per queue
+    ni = 400      # Number of iterations
+    niq = 2       # Number of new queues per iteration
+    
+    # Generate initial queues
+    1.upto(nq) do |i|
+      1.upto(nj) { Resque::Job.create("initial_queue#{i}", TestJob) }
+      Resque::Plugins::RandomSelection::Base.activate('group1', "initial_queue#{i}")
+    end
+
+    worker = Resque::Plugins::RandomSelection::RandomSelectionWorker.new('@group1')
+    pqueues = []
+    
+    1.upto(ni) do |i|
+      1.upto(niq) do |j|
+        queue = "new_queue#{(i - 1) * niq + (j - 1) + 1}"
+        1.upto(nj) { Resque::Job.create(queue, TestJob) }
+        Resque::Plugins::RandomSelection::Base.activate('group1', queue)
+      end
+  
+      jobs_count = 0
+      worker.work(0) do |job|
+        pqueues << job.queue
+        jobs_count += 1
+        worker.pause_processing if jobs_count >= nj
+      end
+      worker.unpause_processing
+    end
+
+#    pqueues.each {|q| puts ":#{q}:" }
+    1.upto(nq) do |i|
+      assert_equal nj, pqueues.count("initial_queue#{i}"), 
+        "initial_queue#{i}"
+    end
+  end
+  
+  def test_first_n
+    assert_equal 6, compute_first_n(%w[ a b c a a j a w s a j s a ], 'a', 4)
+  end
+  
+  def test_first_n_early_finish
+    assert_nothign_raised { compute_first_n(%w[ a b c a a j a w s a j s a ], 'a', 6) }
+    assert_raises(RuntimeError) { compute_first_n(%w[ a b c a a j a w s a j s a ], 'a', 7) }
+  end
+  
+  # Compute the index in the array where n of the items of type +item+ were encountered
+  def compute_first_n(array, item, n)
+    index = 0; c = 0
+    array.each {|i| c += 1 if i == item; break unless c < n; index += 1; }
+    raise "Never got to #{n} appearances, ran through whole array" if
+      c < n
     index
   end
 end
