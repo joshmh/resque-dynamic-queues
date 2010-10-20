@@ -68,6 +68,12 @@ class RandomSelectionTest < Test::Unit::TestCase
   end
 
   # TODO: Low level testing of queues, activate, remove_queue
+
+  # TODO
+  def test_queue_new_handles_emptied_queues
+    assert_equal 0, Resque.redis.llen('queue-new')
+    flunk "Test needs to be written"
+  end
   
   def test_pop_last_item_removes_queue
     # Set this to 0.01 so that we'll trigger the queue-new list but we can
@@ -83,7 +89,6 @@ class RandomSelectionTest < Test::Unit::TestCase
     Resque.pop('queue1')
     assert_equal 0, Resque.queues.size
     assert_equal 0, Resque::Plugins::RandomSelection::Base.queues('group1').size
-    assert_equal 0, Resque.redis.llen('queue-new')
   end
   
   # Note: The algorithm used needs to be modified. All queues must be loaded
