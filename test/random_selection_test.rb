@@ -13,8 +13,12 @@ class RandomSelectionTest < Test::Unit::TestCase
     Resque.redis.flushall
     Resque::Plugins::RandomSelection::Base.number_of_queues = nil
     Resque::Plugins::RandomSelection::Base.quick_start_factor = nil
-
+    Time.test_mode = true
     srand
+  end
+  
+  def teardown
+    Time.test_mode = false
   end
   
   def test_lint
@@ -175,21 +179,40 @@ class RandomSelectionTest < Test::Unit::TestCase
     
     # All queues should get a chance after a number of iterations that's
     # reasonably close to the number of total queues.
-    max_expected = n * k * 2
+    max_expected = n * k * 1 # (was n * k * 2 for random algorithm)
     1.upto(n) do |i|
       first_n = compute_first_n(pqueues, "queue#{i}", k)
-      assert first_n < max_expected, 
+      assert first_n <= max_expected, 
         "Queue#{i} only showed up #{k} times #{(first_n * 100) / pqueue_size}% of the " +
         "way through. #{first_n} was expected to be less than #{max_expected}."
     end
   end
 
+  def test_increment_work
+    Resque::Plugins::RandomSelection::Base.increment_work('queue1')
+    assert_equal 1, Resque::Plugins::RandomSelection::Base.units_worked('queue1').to_i
+  end
+  
+  def test_work_increments
+    Resque::Plugins::RandomSelection::Base.increment_work('queue_test')
+    
+    Resque::Job.create(:queue1, TestJob)
+    Resque::Job.create(:queue1, TestJob)
+    Resque::Plugins::RandomSelection::Base.activate('group1', "queue1")
+    worker = Resque::Plugins::RandomSelection::RandomSelectionWorker.new('@group1')
+    worker.work(0) do
+      worker.pause_processing
+    end
+    assert_equal 1, Resque::Plugins::RandomSelection::Base.units_worked('queue1').to_i
+  end
+  
   def test_no_starvation_dynamic_no_growth
     nq = 20       # Number of initial queues
+    tq = 20
     nj = 10       # Jobs per queue
     niq = 0       # Number of new queues per iteration
 
-    p no_starvation_dynamic(nq, nj, niq) # 20
+    p no_starvation_dynamic(nq, tq, nj, niq) # 20 : 20 / 1.3s
   end
   
   def test_no_starvation_dynamic_moderate_growth
@@ -198,7 +221,7 @@ class RandomSelectionTest < Test::Unit::TestCase
     niq = 1
     tq = 100
     
-    p no_starvation_dynamic(nq, tq, nj, niq) # 63 / 3s
+    p no_starvation_dynamic(nq, tq, nj, niq) # 63 / 3s : 38 / 3.7s
   end
 
   def test_no_starvation_dynamic_moderate2_growth
@@ -207,7 +230,7 @@ class RandomSelectionTest < Test::Unit::TestCase
     nj = 10       # Jobs per queue
     niq = 2
     
-    p no_starvation_dynamic(nq, tq, nj, niq) # 345 / 28s
+    p no_starvation_dynamic(nq, tq, nj, niq) # 345 / 28s : 190 / 36s
   end
 
   def test_no_starvation_dynamic_hi_growth
@@ -216,7 +239,7 @@ class RandomSelectionTest < Test::Unit::TestCase
     nj = 10       # Jobs per queue
     niq = 2       # Number of new queues per iteration
 
-    p no_starvation_dynamic(nq, tq, nj, niq) # 841 / 36s
+    p no_starvation_dynamic(nq, tq, nj, niq) # 841 / 36s : 342 : 94s
   end
 
   def test_no_starvation_dynamic_super_hi_growth
@@ -225,7 +248,7 @@ class RandomSelectionTest < Test::Unit::TestCase
     nj = 10       # Jobs per queue
     niq = 4       # Number of new queues per iteration
 
-    p no_starvation_dynamic(nq, tq, nj, niq) # 237 / 10s
+    p no_starvation_dynamic(nq, tq, nj, niq) # 237 / 10s : 130 / 21s
   end
   
   def no_starvation_dynamic(nq, tq, nj, niq)
@@ -237,7 +260,7 @@ class RandomSelectionTest < Test::Unit::TestCase
     
     @jobs_to_work = 10
     @jobs_per_queue = nj
-    
+        
     # Generate initial queues
     1.upto(nq) do |i|
       queue = "initial_queue#{i}"
@@ -250,7 +273,7 @@ class RandomSelectionTest < Test::Unit::TestCase
     @queues_completed = 0
     new_queue_count = 0
     
-    iterations = (tq - nq) / niq
+    iterations = niq == 0 ? 0 : (tq - nq) / niq
     work = 0
     1.upto(iterations) do |i|
       1.upto(niq) do |j|
@@ -266,9 +289,11 @@ class RandomSelectionTest < Test::Unit::TestCase
     loop do
       work += 1
       new_queue_count += 1
-      queue = "new_queue#{new_queue_count}"
-      1.upto(nj) { Resque::Job.create(queue, TestJob) }
-      Resque::Plugins::RandomSelection::Base.activate('group1', queue)
+      if niq > 0
+        queue = "new_queue#{new_queue_count}"
+        1.upto(nj) { Resque::Job.create(queue, TestJob) }
+        Resque::Plugins::RandomSelection::Base.activate('group1', queue)
+      end
       break if work_until_done(nq)
     end
     work
@@ -302,6 +327,18 @@ class RandomSelectionTest < Test::Unit::TestCase
   def test_first_n_early_finish
     assert_nothing_raised { compute_first_n(%w[ a b c a a j a w s a j s a ], 'a', 6) }
     assert_raises(RuntimeError) { compute_first_n(%w[ a b c a a j a w s a j s a ], 'a', 7) }
+  end
+  
+  def test_time
+    Time.test_mode = true
+    t0 = Time.now
+    assert_equal 1, Time.now - t0
+    assert_equal 2, Time.now - t0
+    
+    Time.test_mode = false
+    t0 = Time.now
+    sleep 0.1
+    assert_in_delta 0.1, Time.now - t0, 0.05
   end
   
   # Compute the index in the array where n of the items of type +item+ were encountered

@@ -55,9 +55,9 @@ module Resque
           # realizing that it's a dynamic queue, and so the queue would never get deleted.
           # Since there is no access to the queue until queue is added to group set
           # adding the queue to the group hash first can have no ill effect.
+          redis.hset('queue-start-time', queue, Time.now.to_f.to_s)
+          redis.hset('queue-work', queue, 0)
           redis.hset('queue-group-lookup', queue, queue_group)
-          redis.hset('queue-probability', queue, probability.to_s)
-          redis.rpush('queue-new', queue) if force_quick_start || quick_start_factor > 0.0
           redis.sadd("queue_group:#{queue_group}", queue)
         end
 
@@ -66,8 +66,9 @@ module Resque
           # Redis.remove_queue should still be called, as well.
           queue_group = redis.hget('queue-group-lookup', queue)
           if queue_group
+            redis.hdel('queue-start-time', queue)
+            redis.hdel('queue-work', queue)
             redis.hdel('queue-group-lookup', queue)
-            redis.hdel('queue-probability', queue)
             redis.srem("queue_group:#{queue_group}", queue)
           end
         end
@@ -89,26 +90,32 @@ module Resque
         end
         
         def queue(queue_group)
-          # First check for brand new queues
-          if quick_start_factor > 0.0 && rand < quick_start_factor
-            loop do
-              q = redis.lpop('queue-new') or break
-              
-              # Now check if the queue is still around, otherwise keep popping
-              return q if queue_exists?(q)
-            end
+          t = Time.now.to_f
+          start_times = redis.hgetall('queue-start-time')
+          return nil if start_times.empty?
+          work_table = redis.hgetall('queue-work')
+                    
+          # Compute scores
+          scores = start_times.map do |k,v|
+            delta = t - v.to_f
+            work  = work_table[k].to_f
+            score = work / delta  # delta == 0.0 is ok, score will be Infinity
+            [ k, score ]
           end
-          
-          i = 0
-          loop do
-            queue = redis.srandmember("queue_group:#{queue_group}")
-            break queue if i > random_attempts
-            probability = redis.hget('queue-probability', queue).to_f
-            break queue if rand < probability
-            i += 1
-          end
+                    
+          # Choose best score
+          scores.min {|a,b| a.last <=> b.last }.first
         end
 
+        # Units of work +queue+ did. Useful for testing
+        def units_worked(queue)
+          redis.hget('queue-work', queue)
+        end
+        
+        def increment_work(queue)
+          redis.hincrby('queue-work', queue, 1) if get_queue_group(queue)
+        end 
+        
         def queues(queue_group)
           qs = []
           1.upto(number_of_queues) { qs << queue(queue_group) }
@@ -165,6 +172,7 @@ module Resque
       end
             
       class RandomSelectionWorker < ::Resque::Worker
+
         def queues
           queue = @queues.first
           raise ::Resque::Plugins::RandomSelection::QueueGroupNamingError, 
@@ -180,3 +188,6 @@ module Resque
 end
 
 Resque.extend Resque::Plugins::RandomSelection::Resque
+Resque.before_fork do |job|
+  ::Resque::Plugins::RandomSelection::Base.increment_work(job.queue)
+end

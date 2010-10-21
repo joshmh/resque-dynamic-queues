@@ -1,5 +1,6 @@
 require File.dirname(__FILE__) + '/../test/test_helper'
 require 'benchmark'
+require 'ruby-prof'
 
 NUM_QUEUES = 100
 
@@ -26,7 +27,7 @@ module QueueGenerator
       1.upto(profile[:queue_count] * profile[:job_count]) do
         Resque::Job.create(queue, TestWorker)
       end
-      Resque::Plugins::RandomSelection::Base.activate('group1', queue, 1.0 / speed)
+      Resque::Plugins::RandomSelection::Base.activate('group1', queue)
     end
   end
   
@@ -48,8 +49,8 @@ end
 
 Resque.redis.flushall
 
-Benchmark.bmbm do |x|
 =begin
+Benchmark.bmbm do |x|
   QueueGenerator.generate_regular_queues
   regular_worker = Resque::Worker.new('*')
   puts "Number of regular queues: #{regular_worker.queues.size}"
@@ -57,7 +58,6 @@ Benchmark.bmbm do |x|
     regular_worker.work(0)
   end
   Resque.redis.flushall
-=end  
   QueueGenerator.generate_random_queues
   random_worker = Resque::Plugins::RandomSelection::RandomSelectionWorker.new('@group1')
   x.report("random run:") do
@@ -66,19 +66,20 @@ Benchmark.bmbm do |x|
 end
 
 Resque.redis.flushall
+=end
 
-=begin
+#=begin
 
 # Now profile regular to see why it's taking longer:
 
 puts 'Profiling...'
 
 # Profile the code
-QueueGenerator.generate_regular_queues
-regular_worker = Resque::Worker.new('*')
-puts "Number of regular queues: #{regular_worker.queues.size}"
+QueueGenerator.generate_random_queues
+worker = Resque::Plugins::RandomSelection::RandomSelectionWorker.new('@group1')
+puts "Number of queues: #{worker.queues.size}"
 result = RubyProf.profile do
-  regular_worker.work(0)
+  worker.work(0)
 end
 
 # Print a graph profile to text
@@ -87,4 +88,4 @@ printer = RubyProf::GraphPrinter.new(result)
 printer.print(file, 4)
 
 Resque.redis.flushall
-=end
+#=end

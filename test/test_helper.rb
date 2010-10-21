@@ -11,6 +11,31 @@ begin
 rescue LoadError
 end
 
+# Hack Time for testing. Increments every time Time.now is called, so we times
+# are always at least a second apart.
+class Time
+  class << self
+    attr_accessor :test_mode
+    alias_method :now_orig, :now
+    def now
+      if test_mode
+        increment
+        @incremented_time
+      else
+        now_orig
+      end
+    end
+    
+    def increment(incr = 1)
+      @incremented_time ||= now_orig
+      @incremented_time += incr
+    end  
+  end
+end
+
+module TestTime
+end
+
 #
 # make sure we can run redis
 #
