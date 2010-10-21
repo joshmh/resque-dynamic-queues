@@ -12,7 +12,6 @@ class RandomSelectionTest < Test::Unit::TestCase
   def setup
     Resque.redis.flushall
     Resque::Plugins::RandomSelection::Base.number_of_queues = nil
-    Resque::Plugins::RandomSelection::Base.quick_start_factor = nil
     Time.test_mode = true
     srand
   end
@@ -88,7 +87,6 @@ class RandomSelectionTest < Test::Unit::TestCase
   # Checks to see if the quick start queue is getting cleaned up as
   # we pop off queues.
   def test_queue_new_handles_emptied_queues
-    Resque::Plugins::RandomSelection::Base.quick_start_factor = 1.0
     assert_equal 0, Resque.redis.llen('queue-new')
 
     # Populate queues
@@ -157,9 +155,6 @@ class RandomSelectionTest < Test::Unit::TestCase
     # Note: This isn't a rigorous statistical test. If it happens to fail but is reasonably
     # close to the expected values, it still works.
     
-    # Make the test harder, don't let queues quick start
-    Resque::Plugins::RandomSelection::Base.quick_start_factor = 0.0
-
     n   = 20  # Number of queues
     k   = 3   # Number of queue appearances to sample for
     nj  = 30  # Number of jobs per queue
@@ -221,7 +216,7 @@ class RandomSelectionTest < Test::Unit::TestCase
     niq = 1
     tq = 100
     
-    p no_starvation_dynamic(nq, tq, nj, niq) # 63 / 3s : 38 / 3.7s
+    p no_starvation_dynamic(nq, tq, nj, niq) # 63 / 3s : 38 / 3.7s : 41 / 3.6s
   end
 
   def test_no_starvation_dynamic_moderate2_growth
@@ -230,7 +225,7 @@ class RandomSelectionTest < Test::Unit::TestCase
     nj = 10       # Jobs per queue
     niq = 2
     
-    p no_starvation_dynamic(nq, tq, nj, niq) # 345 / 28s : 190 / 36s
+    p no_starvation_dynamic(nq, tq, nj, niq) # 345 / 28s : 190 / 36s : 210 / 38s
   end
 
   def test_no_starvation_dynamic_hi_growth
@@ -239,7 +234,8 @@ class RandomSelectionTest < Test::Unit::TestCase
     nj = 10       # Jobs per queue
     niq = 2       # Number of new queues per iteration
 
-    p no_starvation_dynamic(nq, tq, nj, niq) # 841 / 36s : 342 : 94s
+    # random : scored : scored with fast_start and speeds
+    p no_starvation_dynamic(nq, tq, nj, niq) # 841 / 36s : 342 / 94s : 414 / 152s 
   end
 
   def test_no_starvation_dynamic_super_hi_growth
@@ -254,9 +250,6 @@ class RandomSelectionTest < Test::Unit::TestCase
   def no_starvation_dynamic(nq, tq, nj, niq)
     # Attempts to model a more realistic scenario where jobs are being added and
     # completed all the time.
-
-    # Make the test harder, don't let queues quick start
-    Resque::Plugins::RandomSelection::Base.quick_start_factor = 0.0
     
     @jobs_to_work = 10
     @jobs_per_queue = nj

@@ -14,19 +14,9 @@ module Resque
       class QueueGroupNamingError < RuntimeError; end
 
       module Base
-        RANDOM_ATTEMPTS   = 20
         NUMBER_OF_QUEUES  = 1
-        QUICK_START_FACTOR = 0.5
         
         extend self
-        
-        # Number of times to attempt a random queue fetch before giving up
-        # and returning what we have. Higher numbers will give us more accurate
-        # modelling of the different queue probabilities, with the drawback
-        # of an occasional batch of many Redis calls. This should be changed
-        # as a function of the lowest probability queue in the system, but
-        # is unlikely to have much effect on average performance.
-        attr_writer :number_of_queues
         
         # Number of queues to return from +queues+ method. Conceptually we only
         # need to return one, because we immediately remove all empty queues, so
@@ -35,30 +25,22 @@ module Resque
         # going on, and this happens a lot, returning more queues would reduce the
         # possibility of workers waiting for a new queue. Setting to high values
         # has a big impact on performance.
-        attr_writer :random_attempts
-        
-        # A fraction between 0.0 and 1.0 determining how much weight to give brand new queues.
-        # If 1.0, the next queue chosen will always be a new one if a new queue exists.
-        # If 0.0 there will be no bias towards new queues.
-        attr_writer :quick_start_factor
-        
-        # Forces usage of quick start queue, even if quick_start_factor is 0.0.
-        # Useful for testing and debugging.
-        attr_writer :force_quick_start
-        
+        attr_writer :number_of_queues
+                
         # Adds queue to queue group. Call this once all items have been enqueued.
         # This will activate the queue. This should be called by the application
         # for dynamic queues (queues that will be run by RandomWorkers).
-        def activate(queue_group, queue, probability = 1.0)
+        def activate(queue_group, queue, speed = 1)
           # Note: The call order is important here. If the queue was added to the
           # group set first, it would be possible to empty out the queue via pop, without 
           # realizing that it's a dynamic queue, and so the queue would never get deleted.
           # Since there is no access to the queue until queue is added to group set
           # adding the queue to the group hash first can have no ill effect.
           redis.hset('queue-start-time', queue, Time.now.to_f.to_s)
-          redis.hset('queue-work', queue, 0)
+          redis.hset('queue-speed', queue, speed)
           redis.hset('queue-group-lookup', queue, queue_group)
           redis.sadd("queue_group:#{queue_group}", queue)
+          redis.hset('queue-work', queue, 0)
         end
 
         def remove_priority_queue(queue)
@@ -66,27 +48,16 @@ module Resque
           # Redis.remove_queue should still be called, as well.
           queue_group = redis.hget('queue-group-lookup', queue)
           if queue_group
+            redis.srem("queue_group:#{queue_group}", queue)
             redis.hdel('queue-start-time', queue)
+            redis.hdel('queue-speed', queue)
             redis.hdel('queue-work', queue)
             redis.hdel('queue-group-lookup', queue)
-            redis.srem("queue_group:#{queue_group}", queue)
           end
-        end
-
-        def random_attempts
-          @random_attempts ||= RANDOM_ATTEMPTS
         end
                 
         def number_of_queues
           @number_of_queues ||= NUMBER_OF_QUEUES
-        end
-
-        def quick_start_factor
-          @quick_start_factor ||= QUICK_START_FACTOR
-        end
-        
-        def force_quick_start
-          @force_quick_start.nil? ? ( @force_quick_start = false ) : @force_quick_start
         end
         
         def queue(queue_group)
@@ -94,11 +65,13 @@ module Resque
           start_times = redis.hgetall('queue-start-time')
           return nil if start_times.empty?
           work_table = redis.hgetall('queue-work')
-                    
+          speed_table = redis.hgetall('queue-speed')
+          
           # Compute scores
           scores = start_times.map do |k,v|
-            delta = t - v.to_f
             work  = work_table[k].to_f
+            speed = speed_table[k].to_i
+            delta = (t - v.to_f) * speed
             score = work / delta  # delta == 0.0 is ok, score will be Infinity
             [ k, score ]
           end
