@@ -183,49 +183,117 @@ class RandomSelectionTest < Test::Unit::TestCase
         "way through. #{first_n} was expected to be less than #{max_expected}."
     end
   end
+
+  def test_no_starvation_dynamic_no_growth
+    nq = 20       # Number of initial queues
+    nj = 10       # Jobs per queue
+    niq = 0       # Number of new queues per iteration
+
+    p no_starvation_dynamic(nq, nj, niq) # 20
+  end
   
-  def test_no_starvation_dynamic
+  def test_no_starvation_dynamic_moderate_growth
+    nq = 20       # Number of initial queues
+    nj = 10       # Jobs per queue
+    niq = 1
+    tq = 100
+    
+    p no_starvation_dynamic(nq, tq, nj, niq) # 63
+  end
+
+  def test_no_starvation_dynamic_hi_growth
+    nq =  50       # Number of initial queues
+#    nq = 20       # Number of initial queues
+    tq = 500
+    nj = 10       # Jobs per queue
+    niq = 2       # Number of new queues per iteration
+
+#    p no_starvation_dynamic(nq, nj, niq) # 387
+    p no_starvation_dynamic(nq, tq, nj, niq) # 49
+  end
+
+  def test_no_starvation_dynamic_super_hi_growth
+    nq = 20       # Number of initial queues
+    tq = 100      # Number of total queues
+    nj = 10       # Jobs per queue
+    niq = 4       # Number of new queues per iteration
+
+    p no_starvation_dynamic(nq, tq, nj, niq) # 741
+  end
+  
+  def no_starvation_dynamic(nq, tq, nj, niq)
     # Attempts to model a more realistic scenario where jobs are being added and
     # completed all the time.
 
     # Make the test harder, don't let queues quick start
     Resque::Plugins::RandomSelection::Base.quick_start_factor = 0.0
-
-    nq = 20       # Number of initial queues
-    nj = 10       # Jobs per queue
-    ni = 400      # Number of iterations
-    niq = 2       # Number of new queues per iteration
+    
+    @jobs_per_queue = {}
+    @jobs_to_work = 10
     
     # Generate initial queues
     1.upto(nq) do |i|
-      1.upto(nj) { Resque::Job.create("initial_queue#{i}", TestJob) }
-      Resque::Plugins::RandomSelection::Base.activate('group1', "initial_queue#{i}")
+      # Decent exponential distribution of jobs per queue
+      nj = (( 2 ** ( 10 * rand )  / 10 ) + 1 ).to_i
+
+      queue = "initial_queue#{i}"
+      @jobs_per_queue[queue] = nj
+      1.upto(nj) { Resque::Job.create(queue, TestJob) }
+      Resque::Plugins::RandomSelection::Base.activate('group1', queue)
     end
 
-    worker = Resque::Plugins::RandomSelection::RandomSelectionWorker.new('@group1')
-    pqueues = []
+    @worker = Resque::Plugins::RandomSelection::RandomSelectionWorker.new('@group1')
+    @jobs_completed = {}
+    @queues_completed = 0
+    new_queue_count = 0
     
-    1.upto(ni) do |i|
+    iterations = (tq - nq) / niq
+    work = 0
+    1.upto(iterations) do |i|
       1.upto(niq) do |j|
-        queue = "new_queue#{(i - 1) * niq + (j - 1) + 1}"
+        new_queue_count += 1
+        queue = "new_queue#{new_queue_count}"
+
+        # Decent exponential distribution of jobs per queue
+        nj = (( 2 ** ( 10 * rand )  / 10 ) + 1 ).to_i
+
         1.upto(nj) { Resque::Job.create(queue, TestJob) }
         Resque::Plugins::RandomSelection::Base.activate('group1', queue)
       end
+      work += 1
+      return work if work_until_done(nq)
+    end
+    
+    loop do
+      work += 1
+      new_queue_count += 1
+      queue = "new_queue#{new_queue_count}"
+      1.upto(nj) { Resque::Job.create(queue, TestJob) }
+      Resque::Plugins::RandomSelection::Base.activate('group1', queue)
+      break if work_until_done(nq)
+    end
+    work
+  end
   
-      jobs_count = 0
-      worker.work(0) do |job|
-        pqueues << job.queue
-        jobs_count += 1
-        worker.pause_processing if jobs_count >= nj
+  def work_until_done(nq)
+    jobs_count = 0
+    @worker.work(0) do |job|
+      queue = job.queue
+      if queue.start_with? 'initial'
+        @jobs_completed[queue] ||= 0
+        @jobs_completed[queue]  += 1
+        if @jobs_completed[queue] == @jobs_per_queue[queue]
+          @queues_completed += 1
+          if @queues_completed == nq
+            return true
+          end
+        end
       end
-      worker.unpause_processing
+      jobs_count += 1
+      @worker.pause_processing if jobs_count >= @jobs_to_work
     end
-
-#    pqueues.each {|q| puts ":#{q}:" }
-    1.upto(nq) do |i|
-      assert_equal nj, pqueues.count("initial_queue#{i}"), 
-        "initial_queue#{i}"
-    end
+    @worker.unpause_processing
+    false
   end
   
   def test_first_n
@@ -233,7 +301,7 @@ class RandomSelectionTest < Test::Unit::TestCase
   end
   
   def test_first_n_early_finish
-    assert_nothign_raised { compute_first_n(%w[ a b c a a j a w s a j s a ], 'a', 6) }
+    assert_nothing_raised { compute_first_n(%w[ a b c a a j a w s a j s a ], 'a', 6) }
     assert_raises(RuntimeError) { compute_first_n(%w[ a b c a a j a w s a j s a ], 'a', 7) }
   end
   
