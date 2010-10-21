@@ -198,18 +198,25 @@ class RandomSelectionTest < Test::Unit::TestCase
     niq = 1
     tq = 100
     
-    p no_starvation_dynamic(nq, tq, nj, niq) # 63
+    p no_starvation_dynamic(nq, tq, nj, niq) # 63 / 3s
+  end
+
+  def test_no_starvation_dynamic_moderate2_growth
+    nq = 100       # Number of initial queues
+    tq = 110
+    nj = 10       # Jobs per queue
+    niq = 2
+    
+    p no_starvation_dynamic(nq, tq, nj, niq) # 345 / 28s
   end
 
   def test_no_starvation_dynamic_hi_growth
     nq =  50       # Number of initial queues
-#    nq = 20       # Number of initial queues
     tq = 500
     nj = 10       # Jobs per queue
     niq = 2       # Number of new queues per iteration
 
-#    p no_starvation_dynamic(nq, nj, niq) # 387
-    p no_starvation_dynamic(nq, tq, nj, niq) # 49
+    p no_starvation_dynamic(nq, tq, nj, niq) # 841 / 36s
   end
 
   def test_no_starvation_dynamic_super_hi_growth
@@ -218,7 +225,7 @@ class RandomSelectionTest < Test::Unit::TestCase
     nj = 10       # Jobs per queue
     niq = 4       # Number of new queues per iteration
 
-    p no_starvation_dynamic(nq, tq, nj, niq) # 741
+    p no_starvation_dynamic(nq, tq, nj, niq) # 237 / 10s
   end
   
   def no_starvation_dynamic(nq, tq, nj, niq)
@@ -228,16 +235,12 @@ class RandomSelectionTest < Test::Unit::TestCase
     # Make the test harder, don't let queues quick start
     Resque::Plugins::RandomSelection::Base.quick_start_factor = 0.0
     
-    @jobs_per_queue = {}
     @jobs_to_work = 10
+    @jobs_per_queue = nj
     
     # Generate initial queues
     1.upto(nq) do |i|
-      # Decent exponential distribution of jobs per queue
-      nj = (( 2 ** ( 10 * rand )  / 10 ) + 1 ).to_i
-
       queue = "initial_queue#{i}"
-      @jobs_per_queue[queue] = nj
       1.upto(nj) { Resque::Job.create(queue, TestJob) }
       Resque::Plugins::RandomSelection::Base.activate('group1', queue)
     end
@@ -253,10 +256,6 @@ class RandomSelectionTest < Test::Unit::TestCase
       1.upto(niq) do |j|
         new_queue_count += 1
         queue = "new_queue#{new_queue_count}"
-
-        # Decent exponential distribution of jobs per queue
-        nj = (( 2 ** ( 10 * rand )  / 10 ) + 1 ).to_i
-
         1.upto(nj) { Resque::Job.create(queue, TestJob) }
         Resque::Plugins::RandomSelection::Base.activate('group1', queue)
       end
@@ -282,7 +281,7 @@ class RandomSelectionTest < Test::Unit::TestCase
       if queue.start_with? 'initial'
         @jobs_completed[queue] ||= 0
         @jobs_completed[queue]  += 1
-        if @jobs_completed[queue] == @jobs_per_queue[queue]
+        if @jobs_completed[queue] == @jobs_per_queue
           @queues_completed += 1
           if @queues_completed == nq
             return true
