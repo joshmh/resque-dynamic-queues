@@ -72,7 +72,7 @@ module Resque
             speed = info['speed']
             start_time = info['start_time']
             delta = (t - start_time) * speed
-            score = work / delta  # delta == 0.0 is ok, score will be Infinity
+            score = work == 0.0 ? 0.0 : work / delta  # delta == 0.0 is ok, score will be Infinity
             [ k, score ]
           end
                     
