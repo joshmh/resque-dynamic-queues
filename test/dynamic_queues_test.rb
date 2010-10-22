@@ -1,6 +1,6 @@
 require File.dirname(__FILE__) + '/test_helper'
 
-class RandomSelectionTest < Test::Unit::TestCase
+class DynamicQueuesTest < Test::Unit::TestCase
   include Resque::Helpers
   
   class TestJob
@@ -11,7 +11,7 @@ class RandomSelectionTest < Test::Unit::TestCase
     
   def setup
     Resque.redis.flushall
-    Resque::Plugins::RandomSelection::Base.number_of_queues = nil
+    Resque::Plugins::DynamicQueues::Base.number_of_queues = nil
     Time.test_mode = true
     srand
   end
@@ -22,7 +22,7 @@ class RandomSelectionTest < Test::Unit::TestCase
   
   def test_lint
     assert_nothing_raised do
-      Resque::Plugin.lint(Resque::Plugins::RandomSelection)
+      Resque::Plugin.lint(Resque::Plugins::DynamicQueues)
     end
   end
 
@@ -34,16 +34,16 @@ class RandomSelectionTest < Test::Unit::TestCase
 
   # Need to run all Resque tests after plugin is patched in
   def test_push_to_new_active_queue
-    Resque::Plugins::RandomSelection::Base.activate('group1', 'queue1', 1)
-    assert_raise(Resque::Plugins::RandomSelection::ClosedQueueError) do
+    Resque::Plugins::DynamicQueues::Base.activate('group1', 'queue1', 1)
+    assert_raise(Resque::Plugins::DynamicQueues::ClosedQueueError) do
       Resque.push('queue1', 'item1')
     end
   end
 
   def test_push_to_existing_active_queue
     assert_nothing_raised { Resque.push('queue1', 'item1') }
-    Resque::Plugins::RandomSelection::Base.activate('group1', 'queue1', 1)
-    assert_raise(Resque::Plugins::RandomSelection::ClosedQueueError) do
+    Resque::Plugins::DynamicQueues::Base.activate('group1', 'queue1', 1)
+    assert_raise(Resque::Plugins::DynamicQueues::ClosedQueueError) do
       Resque.push('queue1', 'item2')
     end
   end
@@ -60,74 +60,40 @@ class RandomSelectionTest < Test::Unit::TestCase
   
   def test_run_without_queue_setup
     assert_nothing_raised do
-      worker = Resque::Plugins::RandomSelection::RandomSelectionWorker.new('@group1')
+      worker = Resque::Plugins::DynamicQueues::Worker.new('@group1')
     end
   end
   
   def test_set_number_of_queues
-    assert_equal 1, Resque::Plugins::RandomSelection::Base.number_of_queues
-    Resque::Plugins::RandomSelection::Base.number_of_queues = 7
-    assert_equal 7, Resque::Plugins::RandomSelection::Base.number_of_queues
-    Resque::Plugins::RandomSelection::Base.number_of_queues = 11
-    assert_equal 11, Resque::Plugins::RandomSelection::Base.number_of_queues
-  end
-
-  def test_queue_exists
-    Resque.push('queue1', 'item')
-    assert Resque::Plugins::RandomSelection::Base.queue_exists?('queue1')
-    assert !Resque::Plugins::RandomSelection::Base.queue_exists?('queue2')
-    assert Resque::Plugins::RandomSelection::Base.queue_exists?('queue1')
-    Resque::Plugins::RandomSelection::Base.activate('group1', 'queue1')
-    Resque.pop('queue1')
-    assert !Resque::Plugins::RandomSelection::Base.queue_exists?('queue1')    
+    assert_equal 1, Resque::Plugins::DynamicQueues::Base.number_of_queues
+    Resque::Plugins::DynamicQueues::Base.number_of_queues = 7
+    assert_equal 7, Resque::Plugins::DynamicQueues::Base.number_of_queues
+    Resque::Plugins::DynamicQueues::Base.number_of_queues = 11
+    assert_equal 11, Resque::Plugins::DynamicQueues::Base.number_of_queues
   end
   
   # TODO: Low level testing of queues, activate, remove_queue
-
-  # Checks to see if the quick start queue is getting cleaned up as
-  # we pop off queues.
-  def test_queue_new_handles_emptied_queues
-    assert_equal 0, Resque.redis.llen('queue-new')
-
-    # Populate queues
-    Resque.push('queue1', 'item')
-    Resque.push('queue2', 'item')
-    Resque::Plugins::RandomSelection::Base.activate('group1', 'queue1')
-    Resque::Plugins::RandomSelection::Base.activate('group1', 'queue2')
-
-    # Pop from the first queue, extinguishing the queue
-    Resque.pop('queue1')
-    assert !Resque::Plugins::RandomSelection::Base.queue_exists?('queue1')    
-
-    # Since we never asked for a queue yet, neither queue was popped from queue-new
-    assert_equal 2, Resque.redis.llen('queue-new')    
-
-    # Now we request a queue, this should pull off the first queue, discard it, and
-    # give us the second queue
-    assert_equal 'queue2', Resque::Plugins::RandomSelection::Base.queue('group1')
-    assert_equal 0, Resque.redis.llen('queue-new')    
-  end
   
   def test_pop_last_item_removes_queue
     Resque.push('queue1', 'item')
     Resque.push('queue1', 'item')
-    Resque::Plugins::RandomSelection::Base.activate('group1', 'queue1')
+    Resque::Plugins::DynamicQueues::Base.activate('group1', 'queue1')
     Resque.pop('queue1')
     assert_equal 1, Resque.queues.size
-    assert_equal 1, Resque::Plugins::RandomSelection::Base.queues('group1').size
+    assert_equal 1, Resque::Plugins::DynamicQueues::Base.queues('group1').size
     Resque.pop('queue1')
     assert_equal 0, Resque.queues.size
-    assert_equal 0, Resque::Plugins::RandomSelection::Base.queues('group1').size
+    assert_equal 0, Resque::Plugins::DynamicQueues::Base.queues('group1').size
   end
   
   def test_work
     1.upto(100)   { Resque::Job.create(:queue1, TestJob) }
     1.upto(75)    { Resque::Job.create(:queue2, TestJob) }
     1.upto(50)    { Resque::Job.create(:queue3, TestJob) }
-    Resque::Plugins::RandomSelection::Base.activate('group1', :queue1, 1)
-    Resque::Plugins::RandomSelection::Base.activate('group1', :queue2, 0.25)
-    Resque::Plugins::RandomSelection::Base.activate('group1', :queue3, 0.5)
-    worker = Resque::Plugins::RandomSelection::RandomSelectionWorker.new('@group1')
+    Resque::Plugins::DynamicQueues::Base.activate('group1', :queue1, 4)
+    Resque::Plugins::DynamicQueues::Base.activate('group1', :queue2, 1)
+    Resque::Plugins::DynamicQueues::Base.activate('group1', :queue3, 2)
+    worker = Resque::Plugins::DynamicQueues::Worker.new('@group1')
     
     pqueues = []
     worker.work(0) do |job|
@@ -139,66 +105,39 @@ class RandomSelectionTest < Test::Unit::TestCase
     n2 = compute_first_n pqueues, 'queue2', k
     n3 = compute_first_n pqueues, 'queue3', k
     pqsize = pqueues.size
-    n_total = (pqsize - n1) + (pqsize - n2) + (pqsize - n3)    # Sum of queues distributions
-    p_total = 1 + 0.25 + 0.5  # Sum of queue probabilities
     
-    assert_in_delta 1.0  / p_total, (pqsize - n1).to_f / n_total, 0.2
-    assert_in_delta 0.25 / p_total, (pqsize - n2).to_f / n_total, 0.2
-    assert_in_delta 0.5  / p_total, (pqsize - n3).to_f / n_total, 0.2
+    assert_equal 34, n1
+    assert_equal 134, n2
+    assert_equal 68, n3
     
     assert_equal 100, pqueues.count('queue1')
     assert_equal 75,  pqueues.count('queue2')
     assert_equal 50,  pqueues.count('queue3')
   end
-  
-  def test_no_starvation
-    # Note: This isn't a rigorous statistical test. If it happens to fail but is reasonably
-    # close to the expected values, it still works.
-    
-    n   = 20  # Number of queues
-    k   = 3   # Number of queue appearances to sample for
-    nj  = 30  # Number of jobs per queue
-
-    1.upto(n) do |i|
-      1.upto(30) { Resque::Job.create("queue#{i}", TestJob) }
-      Resque::Plugins::RandomSelection::Base.activate('group1', "queue#{i}")
-    end
-
-    worker = Resque::Plugins::RandomSelection::RandomSelectionWorker.new('@group1')
-    
-    pqueues = []
-    worker.work(0) do |job|
-      pqueues << job.queue
-    end
-    pqueue_size = pqueues.size
-    
-    # All queues should get a chance after a number of iterations that's
-    # reasonably close to the number of total queues.
-    max_expected = n * k * 1 # (was n * k * 2 for random algorithm)
-    1.upto(n) do |i|
-      first_n = compute_first_n(pqueues, "queue#{i}", k)
-      assert first_n <= max_expected, 
-        "Queue#{i} only showed up #{k} times #{(first_n * 100) / pqueue_size}% of the " +
-        "way through. #{first_n} was expected to be less than #{max_expected}."
-    end
-  end
 
   def test_increment_work
-    Resque::Plugins::RandomSelection::Base.increment_work('queue1')
-    assert_equal 1, Resque::Plugins::RandomSelection::Base.units_worked('queue1').to_i
+    Resque::Plugins::DynamicQueues::Base.increment_work('queue1')
+
+    # Shouldn't increment work because queue isn't dynamic
+    assert_equal 0, Resque::Plugins::DynamicQueues::Base.units_worked('queue1').to_i
+    
+    # Make it dynamic, then test again
+    Resque::Plugins::DynamicQueues::Base.activate('group1', "queue1")
+    Resque::Plugins::DynamicQueues::Base.increment_work('queue1')
+    assert_equal 1, Resque::Plugins::DynamicQueues::Base.units_worked('queue1').to_i
   end
   
   def test_work_increments
-    Resque::Plugins::RandomSelection::Base.increment_work('queue_test')
+    Resque::Plugins::DynamicQueues::Base.increment_work('queue_test')
     
     Resque::Job.create(:queue1, TestJob)
     Resque::Job.create(:queue1, TestJob)
-    Resque::Plugins::RandomSelection::Base.activate('group1', "queue1")
-    worker = Resque::Plugins::RandomSelection::RandomSelectionWorker.new('@group1')
+    Resque::Plugins::DynamicQueues::Base.activate('group1', "queue1")
+    worker = Resque::Plugins::DynamicQueues::Worker.new('@group1')
     worker.work(0) do
       worker.pause_processing
     end
-    assert_equal 1, Resque::Plugins::RandomSelection::Base.units_worked('queue1').to_i
+    assert_equal 1, Resque::Plugins::DynamicQueues::Base.units_worked('queue1').to_i
   end
   
   def test_no_starvation_dynamic_no_growth
@@ -207,7 +146,7 @@ class RandomSelectionTest < Test::Unit::TestCase
     nj = 10       # Jobs per queue
     niq = 0       # Number of new queues per iteration
 
-    p no_starvation_dynamic(nq, tq, nj, niq) # 20 : 20 / 1.3s
+    assert_equal 20, no_starvation_dynamic(nq, tq, nj, niq)
   end
   
   def test_no_starvation_dynamic_moderate_growth
@@ -216,7 +155,8 @@ class RandomSelectionTest < Test::Unit::TestCase
     niq = 1
     tq = 100
     
-    p no_starvation_dynamic(nq, tq, nj, niq) # 63 / 3s : 38 / 3.7s : 41 / 3.6s
+    # random : scored : scored with fast_start and speeds    
+    assert_equal 41, no_starvation_dynamic(nq, tq, nj, niq) # 63 / 3s : 38 / 3.7s : 41 / 3.6s
   end
 
   def test_no_starvation_dynamic_moderate2_growth
@@ -225,7 +165,7 @@ class RandomSelectionTest < Test::Unit::TestCase
     nj = 10       # Jobs per queue
     niq = 2
     
-    p no_starvation_dynamic(nq, tq, nj, niq) # 345 / 28s : 190 / 36s : 210 / 38s
+    assert_equal 210, no_starvation_dynamic(nq, tq, nj, niq) # 345 / 28s : 190 / 36s : 210 / 38s
   end
 
   def test_no_starvation_dynamic_hi_growth
@@ -234,8 +174,7 @@ class RandomSelectionTest < Test::Unit::TestCase
     nj = 10       # Jobs per queue
     niq = 2       # Number of new queues per iteration
 
-    # random : scored : scored with fast_start and speeds
-    p no_starvation_dynamic(nq, tq, nj, niq) # 841 / 36s : 342 / 94s : 414 / 152s (107s w/json)
+    assert_equal 414, no_starvation_dynamic(nq, tq, nj, niq) # 841 / 36s : 342 / 94s : 414 / 152s (107s w/json)
   end
 
   def test_no_starvation_dynamic_super_hi_growth
@@ -244,7 +183,7 @@ class RandomSelectionTest < Test::Unit::TestCase
     nj = 10       # Jobs per queue
     niq = 4       # Number of new queues per iteration
 
-    p no_starvation_dynamic(nq, tq, nj, niq) # 237 / 10s : 130 / 21s
+    assert_equal 145, no_starvation_dynamic(nq, tq, nj, niq) # 237 / 10s : 130 / 21s : 145 / 17s
   end
   
   def no_starvation_dynamic(nq, tq, nj, niq)
@@ -258,10 +197,10 @@ class RandomSelectionTest < Test::Unit::TestCase
     1.upto(nq) do |i|
       queue = "initial_queue#{i}"
       1.upto(nj) { Resque::Job.create(queue, TestJob) }
-      Resque::Plugins::RandomSelection::Base.activate('group1', queue)
+      Resque::Plugins::DynamicQueues::Base.activate('group1', queue)
     end
 
-    @worker = Resque::Plugins::RandomSelection::RandomSelectionWorker.new('@group1')
+    @worker = Resque::Plugins::DynamicQueues::Worker.new('@group1')
     @jobs_completed = {}
     @queues_completed = 0
     new_queue_count = 0
@@ -273,7 +212,7 @@ class RandomSelectionTest < Test::Unit::TestCase
         new_queue_count += 1
         queue = "new_queue#{new_queue_count}"
         1.upto(nj) { Resque::Job.create(queue, TestJob) }
-        Resque::Plugins::RandomSelection::Base.activate('group1', queue)
+        Resque::Plugins::DynamicQueues::Base.activate('group1', queue)
       end
       work += 1
       return work if work_until_done(nq)
@@ -285,7 +224,7 @@ class RandomSelectionTest < Test::Unit::TestCase
       if niq > 0
         queue = "new_queue#{new_queue_count}"
         1.upto(nj) { Resque::Job.create(queue, TestJob) }
-        Resque::Plugins::RandomSelection::Base.activate('group1', queue)
+        Resque::Plugins::DynamicQueues::Base.activate('group1', queue)
       end
       break if work_until_done(nq)
     end

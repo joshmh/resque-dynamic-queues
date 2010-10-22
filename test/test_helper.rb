@@ -4,7 +4,7 @@ $TESTING = true
 require 'test/unit'
 require 'rubygems'
 require 'resque'
-require 'resque/plugins/random_selection'
+require 'resque/plugins/dynamic_queues'
 
 begin
   require 'leftright'

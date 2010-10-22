@@ -29,7 +29,7 @@ module QueueGenerator
         1.upto(profile[:job_count]) do
           Resque::Job.create(queue, TestWorker)
         end
-        Resque::Plugins::RandomSelection::Base.activate('group1', queue)
+        Resque::Plugins::DynamicQueues::Base.activate('group1', queue)
       end
     end
   end
@@ -54,7 +54,7 @@ Resque.redis.flushall
 
 Benchmark.bm do |x|
   QueueGenerator.generate_random_queues
-  random_worker = Resque::Plugins::RandomSelection::RandomSelectionWorker.new('@group1')
+  random_worker = Resque::Plugins::DynamicQueues::DynamicQueues::Worker.new('@group1')
   x.report("random run:") do
     random_worker.work(0)
   end
@@ -76,7 +76,7 @@ puts 'Profiling...'
 
 # Profile the code
 QueueGenerator.generate_random_queues
-worker = Resque::Plugins::RandomSelection::RandomSelectionWorker.new('@group1')
+worker = Resque::Plugins::DynamicQueues::DynamicQueues::Worker.new('@group1')
 puts "Number of queues: #{worker.queues.size}"
 result = RubyProf.profile do
   worker.work(0)
