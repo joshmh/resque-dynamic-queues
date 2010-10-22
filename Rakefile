@@ -4,11 +4,11 @@ require 'rake'
 begin
   require 'jeweler'
   Jeweler::Tasks.new do |gem|
-    gem.name = "resque-random-selection"
-    gem.summary = %Q{Adds random selection from dynamic queues to Resque.}
-    gem.description = %Q{This plugin does two things. It implements the concept of dynamic queues and it implements random queue selection. Dynamic queues are queues that are automatically removed when they're empty, allowing queues to mirror transient objects in the app.}
+    gem.name = "resque-dynamic-queues"
+    gem.summary = %Q{Adds dynamic priority queues to Resque.}
+    gem.description = %Q{This plugin does two things. It implements the concept of dynamic queues and it selects the currently slowest queue. Dynamic queues are queues that are automatically removed when they're empty, allowing queues to mirror transient objects in the app.}
     gem.email = "joshmh@gmail.com"
-    gem.homepage = "http://github.com/joshmh/resque-random-selection"
+    gem.homepage = "http://github.com/joshmh/resque-dynamic-queues"
     gem.authors = ["Josh Harvey"]
     gem.add_development_dependency "yard", ">= 0"
     gem.add_dependency('resque', '>= 1.10.0')

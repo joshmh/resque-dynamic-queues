@@ -1,32 +1,33 @@
-Depends on Resque 1.10
+Depends on Resque 1.10 (However, requires redis-namespace 1.10)
 
-# Resque Random Selection
+# Resque Dynamic Queues
 
 This plugin does two things. It implements the concept of dynamic queues
-and it implements random queue selection. Dynamic queues are queues that
+and it selects the currently slowest queue. Dynamic queues are queues that
 are automatically removed when they're empty, allowing queues to mirror
 transient objects in the app.
 
-Random queue selection means the worker will pick a queue at random. Since
-all the queues are active (they have jobs), the first chosen random queue
-will be usable.
+The plugin records work performed and elapsed time for each queue, and always
+selects the queue with the lowest current performance to process next. Since
+all the queues are active (they have jobs), the first selected queue
+will be usable.    
 
 ## Usage
 
 After `require 'resque'`:
 
-`require 'resque/plugins/random_selection'`
+`require 'resque/plugins/dynamic_queues'`
 
 Then, for dynamic queues, once all jobs have been queued:
 <code>
-    Resque::Plugins::RandomSelection::Base.activate('group1', 'queue3')
+    Resque::Plugins::DynamicQueues::Base.activate('group1', 'queue3')
 </code>
 
 This adds the queue to a queue group.
 
 To randomly process jobs from all queues in the queue group:
 <code>
-    worker = Resque::Plugins::RandomSelection::RandomSelectionWorker.new('@group1')
+    worker = Resque::Plugins::DynamicQueues::Worker.new('@group1')
     worker.work
 </code>
 
