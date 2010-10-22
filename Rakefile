@@ -11,7 +11,11 @@ begin
     gem.homepage = "http://github.com/joshmh/resque-dynamic-queues"
     gem.authors = ["Josh Harvey"]
     gem.add_development_dependency "yard", ">= 0"
-    gem.add_dependency('resque', '>= 1.10.0')
+
+    # Note: Until Resque redis-namespace dependency is updated, we have to use a forked
+    # version.
+    gem.add_dependency('resque-joshmh', '>= 1.11.0')
+    
     # gem is a Gem::Specification... see http://www.rubygems.org/read/chapter/20 for additional settings
   end
   Jeweler::GemcutterTasks.new
