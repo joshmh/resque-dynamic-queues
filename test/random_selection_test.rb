@@ -235,7 +235,7 @@ class RandomSelectionTest < Test::Unit::TestCase
     niq = 2       # Number of new queues per iteration
 
     # random : scored : scored with fast_start and speeds
-    p no_starvation_dynamic(nq, tq, nj, niq) # 841 / 36s : 342 / 94s : 414 / 152s 
+    p no_starvation_dynamic(nq, tq, nj, niq) # 841 / 36s : 342 / 94s : 414 / 152s (107s w/json)
   end
 
   def test_no_starvation_dynamic_super_hi_growth

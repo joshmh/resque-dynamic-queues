@@ -21,13 +21,16 @@ module QueueGenerator
     { :speed => 8, :job_count => 100 * FACTOR, :queue_count => 1 },
   ]
   def generate_random_queues
+    qc = 0
     PROFILES.each do |profile|
-      speed = profile[:speed]
-      queue = "RandomQueue#{speed}"
-      1.upto(profile[:queue_count] * profile[:job_count]) do
-        Resque::Job.create(queue, TestWorker)
+      1.upto(profile[:queue_count]) do
+        qc += 1
+        queue = "RandomQueue#{qc}"
+        1.upto(profile[:job_count]) do
+          Resque::Job.create(queue, TestWorker)
+        end
+        Resque::Plugins::RandomSelection::Base.activate('group1', queue)
       end
-      Resque::Plugins::RandomSelection::Base.activate('group1', queue)
     end
   end
   
@@ -49,26 +52,23 @@ end
 
 Resque.redis.flushall
 
-=begin
-Benchmark.bmbm do |x|
-  QueueGenerator.generate_regular_queues
-  regular_worker = Resque::Worker.new('*')
-  puts "Number of regular queues: #{regular_worker.queues.size}"
-  x.report("regular run:") do
-    regular_worker.work(0)
-  end
-  Resque.redis.flushall
+Benchmark.bm do |x|
   QueueGenerator.generate_random_queues
   random_worker = Resque::Plugins::RandomSelection::RandomSelectionWorker.new('@group1')
   x.report("random run:") do
     random_worker.work(0)
   end
+  Resque.redis.flushall
+  QueueGenerator.generate_regular_queues
+  regular_worker = Resque::Worker.new('*')
+  x.report("regular run:") do
+    regular_worker.work(0)
+  end
 end
 
 Resque.redis.flushall
-=end
 
-#=begin
+=begin
 
 # Now profile regular to see why it's taking longer:
 
@@ -88,4 +88,4 @@ printer = RubyProf::GraphPrinter.new(result)
 printer.print(file, 4)
 
 Resque.redis.flushall
-#=end
+=end

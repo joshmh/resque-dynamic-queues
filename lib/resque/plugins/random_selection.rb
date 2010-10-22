@@ -1,4 +1,5 @@
 require 'resque'
+require 'json'
 
 module Resque
   module Plugins
@@ -36,8 +37,7 @@ module Resque
           # realizing that it's a dynamic queue, and so the queue would never get deleted.
           # Since there is no access to the queue until queue is added to group set
           # adding the queue to the group hash first can have no ill effect.
-          redis.hset('queue-start-time', queue, Time.now.to_f.to_s)
-          redis.hset('queue-speed', queue, speed)
+          redis.hset('queue-info', queue, { :start_time => Time.now.to_f, :speed => speed}.to_json)
           redis.hset('queue-group-lookup', queue, queue_group)
           redis.sadd("queue_group:#{queue_group}", queue)
           redis.hset('queue-work', queue, 0)
@@ -49,8 +49,7 @@ module Resque
           queue_group = redis.hget('queue-group-lookup', queue)
           if queue_group
             redis.srem("queue_group:#{queue_group}", queue)
-            redis.hdel('queue-start-time', queue)
-            redis.hdel('queue-speed', queue)
+            redis.hdel('queue-info', queue)
             redis.hdel('queue-work', queue)
             redis.hdel('queue-group-lookup', queue)
           end
@@ -62,16 +61,17 @@ module Resque
         
         def queue(queue_group)
           t = Time.now.to_f
-          start_times = redis.hgetall('queue-start-time')
-          return nil if start_times.empty?
+          info_table = redis.hgetall('queue-info')
+          return nil if info_table.empty?
           work_table = redis.hgetall('queue-work')
-          speed_table = redis.hgetall('queue-speed')
           
           # Compute scores
-          scores = start_times.map do |k,v|
+          scores = info_table.map do |k,v|
+            info = JSON.parse(v)
             work  = work_table[k].to_f
-            speed = speed_table[k].to_i
-            delta = (t - v.to_f) * speed
+            speed = info['speed']
+            start_time = info['start_time']
+            delta = (t - start_time) * speed
             score = work / delta  # delta == 0.0 is ok, score will be Infinity
             [ k, score ]
           end
