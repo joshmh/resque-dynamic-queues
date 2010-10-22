@@ -34,9 +34,9 @@ module Resque
         # for dynamic queues (queues that will be run by DynamicQueues Workers).
         def activate(queue_group, queue, speed = 1)
           # Note: The call order is important here. If the queue was added to the
-          # info hash first, it would be possible to empty out the queue via pop, without 
-          # realizing that it's a dynamic queue, and so the queue would never get deleted.
-          # Since there is no access to the queue until queue is added to group set
+          # info hash first, it would be possible to empty out the queue via pop (via #queueu), 
+          # without realizing that it's a dynamic queue, and so the queue would never get deleted.
+          # Since there is no access to the queue until queue is added to queue-info,
           # adding the queue to the group hash first can have no ill effect.
           redis.hset('queue-group-lookup', queue, queue_group)
           redis.hset("queue-work:#{queue_group}", queue, 0)
