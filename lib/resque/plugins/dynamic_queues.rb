@@ -144,13 +144,19 @@ module Resque
             
       class Worker < ::Resque::Worker
         def queues
-          queue = @queues.first
-          raise ::Resque::Plugins::DynamicQueues::QueueGroupNamingError, 
-            "When using a DynamicQueues Worker, you must supply a queue group, instead " +
-            "of a queue, and the queue group must be prefixed with @, as in @mailings" if
-            !queue.start_with?('@')
-            
+          queue = @queues.first            
           ::Resque::Plugins::DynamicQueues::Base.queues(queue[1..-1])
+        end
+        
+        def validate_queues
+          if @queues.nil? || @queues.size != 1
+            raise NoQueueError.new("Please give each worker a single queue group.")
+          end
+          if !@queues.first.start_with?('@')
+            raise ::Resque::Plugins::DynamicQueues::QueueGroupNamingError, 
+              "When using a DynamicQueues Worker, you must supply a queue group, instead " +
+              "of a queue, and the queue group must be prefixed with @, as in @mailings"          
+          end
         end
       end      
     end
