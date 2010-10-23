@@ -2,6 +2,6 @@ test/dump.rdb
 **/.DS_Store
 pkg/
 .yardoc/
-resque-random-selection.gemspec
 doc/
 coverage/
+*.gemspec
